@@ -1,6 +1,8 @@
 pub mod app;
 mod config;
 pub mod errors;
+pub mod db;
+
 pub mod routes {
     pub mod health;
 }
@@ -32,7 +34,7 @@ async fn main() -> Result<()> {
     let app_env = config.app_env.clone();
 
     // Build the Axum router with all middleware
-    let router = build_router(config);
+    let router = build_router(config).await;
 
     // Bind the TCP listener
     let addr = format!("0.0.0.0:{port}");
