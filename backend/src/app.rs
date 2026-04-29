@@ -1,6 +1,8 @@
 use crate::config::Config;
+use crate::db::create_pool;
 use crate::routes::health::health_handler;
 use axum::{Router, http::StatusCode, routing::get};
+use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tower::ServiceBuilder;
 use tower_http::{
@@ -13,11 +15,13 @@ use tower_http::{
 /// handler threads
 pub struct AppState {
     pub config: Config,
+    pub pg_pool: PgPool,
 }
 
 /// Build the application router
-pub fn build_router(config: Config) -> Router {
-    let state = Arc::new(AppState { config });
+pub async fn build_router(config: Config) -> Router {
+    let pg_pool = create_pool(config.database_url.as_str()).await;
+    let state = Arc::new(AppState { config, pg_pool });
 
     let middleware_stack = ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
