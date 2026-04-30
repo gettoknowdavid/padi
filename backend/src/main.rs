@@ -1,13 +1,17 @@
 pub mod app;
+pub mod cache;
 mod config;
-pub mod errors;
 pub mod db;
+pub mod errors;
+mod middleware;
 
 pub mod routes {
     pub mod health;
 }
 
 use crate::app::build_router;
+use crate::cache::cache_redis_pool;
+use crate::db::create_pool;
 use anyhow::Result;
 use config::Config;
 use tokio::{net::TcpListener, signal};
@@ -33,8 +37,12 @@ async fn main() -> Result<()> {
     let port = config.port;
     let app_env = config.app_env.clone();
 
+
+    let pg_pool = create_pool(config.database_url.as_str()).await;
+    let redis_pool = cache_redis_pool(config.redis_url.as_str())?;
+
     // Build the Axum router with all middleware
-    let router = build_router(config).await;
+    let router = build_router(config, pg_pool, redis_pool).await;
 
     // Bind the TCP listener
     let addr = format!("0.0.0.0:{port}");
