@@ -192,7 +192,7 @@ mod tests {
         });
 
         Router::new()
-            .route("/test", get(dummy_handler))
+            .route("/api/v1/auth/test", get(dummy_handler))
             .route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 rate_limit_middleware,
@@ -232,7 +232,7 @@ mod tests {
         // Send 6 requests (limit = 5) → 6th should be 429
         for i in 0..=5 {
             let req = Request::builder()
-                .uri("/test")
+                .uri("/api/v1/auth/test")
                 .header("X-Forwarded-For", "1.2.3.4")
                 .body(Body::empty())
                 .unwrap();
