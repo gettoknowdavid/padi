@@ -3,11 +3,13 @@
 > A CRM platform built for Nigerian businesses.
 
 ## Stack
+
 - **Backend**: Rust / Axum
 - **Web**: Next.js 15 / TypeScript / TailwindCSS
 - **Mobile**: Flutter 3.x
 
 ## Prerequisites
+
 - Rust (stable) — install via [rustup](https://rustup.rs)
 - Node.js 20+ + pnpm
 - Flutter 3.x
@@ -15,22 +17,8 @@
 
 ## Getting Started
 
-```bash
-# 1. Clone the repo
-git clone <repo-url> && cd padi
-
-# 2. Copy env file and fill in values
-cp .env.example .env
-
-# 3. Start local services (PostgreSQL + Redis)
-make dev          # added in E1-T6
-
-# 4. Run backend
-cd backend && cargo run
-
-# 5. Run web
-cd web && pnpm dev
-
-# 6. Run mobile
-cd mobile && flutter run
-```
+1. Copy `.env.example` to `.env` and fill in values
+2. `make dev`         — starts Docker services + backend
+3. `make migrate`     — runs database migrations
+4. `make test`        — runs all tests
+5. `make fmt`         — formats all code
