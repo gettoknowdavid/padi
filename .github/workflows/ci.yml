@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Rust)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:latest
+        env:
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: padi_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Scopes cache to the backend directory
+          workspaces: "backend -> target"
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+        working-directory: ./backend
+
+      - name: Lint with Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: ./backend
+
+      - name: Run tests
+        run: cargo test
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/padi_test
+
+  web:
+    name: Web (Next.js)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+        working-directory: ./web
+
+      - run: pnpm lint
+        working-directory: ./web
+
+      - run: pnpm type-check
+        working-directory: ./web
+
+      - run: pnpm test
+        working-directory: ./web
+
+  mobile:
+    name: Mobile (Flutter)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+        working-directory: ./mobile
+
+      - run: flutter analyze
+        working-directory: ./mobile
+
+      - run: flutter test
+        working-directory: ./mobile

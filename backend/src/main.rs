@@ -37,7 +37,6 @@ async fn main() -> Result<()> {
     let port = config.port;
     let app_env = config.app_env.clone();
 
-
     let pg_pool = create_pool(config.database_url.as_str()).await;
     let redis_pool = cache_redis_pool(config.redis_url.as_str())?;
 

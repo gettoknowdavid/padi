@@ -19,7 +19,17 @@ pub struct Config {
     pub app_env: String,
     pub port: u16,
     pub frontend_url: String,
+
+    pub rate_limit_general: usize,
+    pub rate_limit_general_window_secs: u64,
+    pub rate_limit_auth: usize,
+    pub rate_limit_auth_window_secs: u64,
 }
+
+const GENERAL_LIMIT: usize = 100;
+const GENERAL_WINDOW_SECS: u64 = 10;
+const AUTH_LIMIT: usize = 5;
+const AUTH_WINDOW_SECS: u64 = 900;
 
 impl Config {
     pub fn from_env() -> Result<Config> {
@@ -55,6 +65,10 @@ impl Config {
                 .parse::<u16>()
                 .context("PORT must be a valid number")?,
             frontend_url: var("FRONTEND_URL").context("FRONTEND_URL is missing")?,
+            rate_limit_auth: AUTH_LIMIT,
+            rate_limit_auth_window_secs: AUTH_WINDOW_SECS,
+            rate_limit_general: GENERAL_LIMIT,
+            rate_limit_general_window_secs: GENERAL_WINDOW_SECS,
         };
 
         Ok(config)
