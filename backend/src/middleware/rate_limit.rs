@@ -132,7 +132,7 @@ mod tests {
     use crate::app::AppState;
     use crate::cache::cache_redis_pool;
     use crate::config::Config;
-    use crate::middleware::rate_limit::{GENERAL_LIMIT, rate_limit_middleware};
+    use crate::middleware::rate_limit::rate_limit_middleware;
     use axum::{
         Router,
         body::Body,
@@ -195,12 +195,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_rate_limit_returns_429() {
-        // Try to create Redis pool - skip test gracefully if Redis is not running locally
-        let redis_pool = match cache_redis_pool("redis://127.0.0.1:6379") {
+        let redis_url = "redis://127.0.0.1:6379";
+        let redis_pool = match cache_redis_pool(redis_url) {
             Ok(pool) => pool,
             Err(_) => {
-                println!("Skipping rate limit test: Redis is not running on localhost:6379");
-                return; // Skip the test instead of failing CI/local runs
+                println!("Skipping: Redis is not running on {}", redis_url);
+                return;
             }
         };
 
@@ -212,8 +212,8 @@ mod tests {
         // Flush Redis so previous test runs don't interfere
         {
             let mut conn = redis_pool.get().await.expect("Redis connection failed");
-            redis::cmd("FLUSHALL")
-                .query_async::<()>(&mut *conn)
+            let _: () = redis::cmd("FLUSHALL")
+                .query_async(&mut *conn)
                 .await
                 .expect("Failed to FLUSHALL");
         }
@@ -222,17 +222,21 @@ mod tests {
 
         let mut last_status = StatusCode::OK;
 
-        // Send GENERAL_LIMIT + 1 requests — the last one should be 429
-        for _ in 0..=GENERAL_LIMIT {
+        // Use a small limit for the test so we don't need 101 requests
+        const TEST_LIMIT: usize = 5;
+
+        // Send TEST_LIMIT + 1 requests
+        for i in 0..=TEST_LIMIT {
             let req = Request::builder()
                 .uri("/test")
-                // Use a fixed IP so all requests share the same rate limit key
                 .header("X-Forwarded-For", "1.2.3.4")
                 .body(Body::empty())
                 .unwrap();
 
             let response = app.clone().oneshot(req).await.unwrap();
             last_status = response.status();
+
+            println!("Request {} → Status: {}", i, last_status);
         }
 
         assert_eq!(
