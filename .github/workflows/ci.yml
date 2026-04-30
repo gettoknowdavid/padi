@@ -13,11 +13,7 @@ concurrency:
 jobs:
   backend:
     name: Backend (Rust)
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: true
-      matrix:
-        os: [ ubuntu-latest ]
+    runs-on: ubuntu-latest
 
     services:
       postgres:
@@ -65,10 +61,6 @@ jobs:
   web:
     name: Web (Next.js)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true
-      matrix:
-        node: [20]
 
     steps:
       - uses: actions/checkout@v4
@@ -79,35 +71,38 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24
           cache: 'pnpm'
 
       - run: pnpm install --frozen-lockfile
+        working-directory: ./web
 
       - run: pnpm lint
+        working-directory: ./web
 
       - run: pnpm type-check
+        working-directory: ./web
 
       - run: pnpm test
+        working-directory: ./web
 
   mobile:
     name: Mobile (Flutter)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true
-      matrix:
-        flutter-channel: [stable]
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: subosito/flutter-action@v2
         with:
-          channel: ${{ matrix.flutter-channel }}
+          channel: stable
           cache: true
 
       - run: flutter pub get
+        working-directory: ./mobile
 
       - run: flutter analyze
+        working-directory: ./mobile
 
       - run: flutter test
+        working-directory: ./mobile
