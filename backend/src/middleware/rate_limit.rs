@@ -11,11 +11,6 @@ use redis::AsyncCommands;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-const GENERAL_LIMIT: usize = 100;
-const GENERAL_WINDOW_SECS: u64 = 10;
-const AUTH_LIMIT: usize = 5;
-const AUTH_WINDOW_SECS: u64 = 900;
-
 pub async fn rate_limit_middleware(
     State(state): State<Arc<AppState>>,
     req: Request<Body>,
@@ -25,9 +20,17 @@ pub async fn rate_limit_middleware(
 
     // Determine which limit group this request falls into
     let (limit, window_secs, group) = if path.starts_with("/api/v1/auth") {
-        (AUTH_LIMIT, AUTH_WINDOW_SECS, "auth")
+        (
+            state.config.rate_limit_auth,
+            state.config.rate_limit_auth_window_secs,
+            "auth",
+        )
     } else {
-        (GENERAL_LIMIT, GENERAL_WINDOW_SECS, "general")
+        (
+            state.config.rate_limit_general,
+            state.config.rate_limit_general_window_secs,
+            "general",
+        )
     };
 
     // Use JWT user ID if present in headers, otherwise fall back to IP
@@ -165,6 +168,10 @@ mod tests {
             app_env: "test".to_string(),
             port: 8080,
             frontend_url: "http://localhost:3000".to_string(),
+            rate_limit_general: 5,
+            rate_limit_general_window_secs: 2,
+            rate_limit_auth: 3,
+            rate_limit_auth_window_secs: 2,
         }
     }
 
@@ -222,11 +229,8 @@ mod tests {
 
         let mut last_status = StatusCode::OK;
 
-        // Use a small limit for the test so we don't need 101 requests
-        const TEST_LIMIT: usize = 5;
-
-        // Send TEST_LIMIT + 1 requests
-        for i in 0..=TEST_LIMIT {
+        // Send 6 requests (limit = 5) → 6th should be 429
+        for i in 0..=5 {
             let req = Request::builder()
                 .uri("/test")
                 .header("X-Forwarded-For", "1.2.3.4")
