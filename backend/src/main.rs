@@ -1,11 +1,11 @@
 pub mod app;
 pub mod cache;
+pub mod common;
 mod config;
 pub mod db;
 pub mod errors;
+pub mod features;
 pub mod middleware;
-pub mod auth;
-pub mod common;
 pub mod routes;
 
 use crate::app::build_router;

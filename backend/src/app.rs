@@ -45,7 +45,7 @@ pub async fn build_router(config: Config, pg_pool: PgPool, redis_pool: RedisPool
 
     Router::new()
         .merge(crate::routes::build_routes())
-        .layer(middleware::from_fn_with_state(state.clone(), rate_limit_middleware))
+        // .layer(middleware::from_fn_with_state(state.clone(), rate_limit_middleware))
         .layer(middleware_stack)
         .with_state(state)
 }

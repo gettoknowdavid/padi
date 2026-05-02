@@ -1,11 +1,12 @@
-use crate::auth::dto::{RegisterRequest, User};
+use crate::features::auth::models::User;
+use crate::features::auth::{RegisterRequest, UserResponse};
 use anyhow::Result;
 use sqlx::{Error, PgPool, query, query_as, query_scalar};
 use uuid::Uuid;
 
-pub async fn find_user_by_email(db: &PgPool, email: &str) -> Result<Option<User>> {
+pub(super) async fn find_user_by_email(db: &PgPool, email: &str) -> Result<Option<UserResponse>> {
     let user = query_as!(
-        User,
+        UserResponse,
         r#"
         SELECT id, email, phone, full_name, is_verified
         FROM users
@@ -18,7 +19,7 @@ pub async fn find_user_by_email(db: &PgPool, email: &str) -> Result<Option<User>
     Ok(user)
 }
 
-pub async fn user_exists(db: &PgPool, email: &str) -> Result<bool, Error> {
+pub(super) async fn user_exists(db: &PgPool, email: &str) -> Result<bool, Error> {
     let exists = query_scalar!(
         r#"SELECT EXISTS(SELECT 1 FROM users WHERE email = $1) as "exists!""#,
         email
@@ -28,7 +29,7 @@ pub async fn user_exists(db: &PgPool, email: &str) -> Result<bool, Error> {
     Ok(exists)
 }
 
-pub async fn create_user(
+pub(super) async fn create_user(
     db: &PgPool,
     req: &RegisterRequest,
     password_hash: String,
@@ -38,7 +39,8 @@ pub async fn create_user(
         r#"
         INSERT INTO users (id, email, password_hash, full_name, phone, is_verified)
         VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, email, phone, full_name, is_verified
+        RETURNING id, email, phone, full_name, avatar_url, password_hash, is_verified,
+                  failed_login_attempts, locked_until, created_at, updated_at, deleted_at
         "#,
         Uuid::new_v4(),
         &req.email,
@@ -52,11 +54,11 @@ pub async fn create_user(
     Ok(new_user)
 }
 
-pub async fn create_audit_log(
+pub(super) async fn create_audit_log(
     db: &PgPool,
     user_id: Uuid,
     action: &str,
-    ip_address: Option<&str>,
+    ip_address: Option<String>,
 ) -> Result<(), Error> {
     query!(
         r#"
@@ -67,7 +69,7 @@ pub async fn create_audit_log(
         user_id,
         action,
         user_id,
-        ip_address
+        ip_address.as_deref()
     )
     .execute(db)
     .await?;

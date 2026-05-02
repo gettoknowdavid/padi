@@ -1,5 +1,5 @@
 use crate::app::AppState;
-use crate::auth::handlers;
+use crate::features::auth::handlers;
 use axum::Router;
 use axum::routing::post;
 use std::sync::Arc;
