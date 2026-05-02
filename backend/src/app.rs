@@ -1,5 +1,8 @@
-use axum::{Router, http::StatusCode, middleware, routing::get};
+use crate::config::Config;
+use crate::middleware::rate_limit::rate_limit_middleware;
+use axum::{Router, http::StatusCode, middleware};
 use deadpool_redis::Pool as RedisPool;
+use reqwest::Client;
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tower::ServiceBuilder;
@@ -9,24 +12,22 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::config::Config;
-use crate::middleware::rate_limit::rate_limit_middleware;
-use crate::routes::health::health_handler;
-
 /// Shared application state. Wrapping this in an [Arc] so it can cheaply be cloned across
 /// handler threads
 pub struct AppState {
     pub config: Config,
-    pub pg_pool: PgPool,
-    pub redis_pool: RedisPool,
+    pub db: PgPool,
+    pub redis: RedisPool,
+    pub http_client: Client,
 }
 
 /// Build the application router
 pub async fn build_router(config: Config, pg_pool: PgPool, redis_pool: RedisPool) -> Router {
     let state = Arc::new(AppState {
         config,
-        pg_pool,
-        redis_pool,
+        db: pg_pool,
+        redis: redis_pool,
+        http_client: Client::new(),
     });
 
     let middleware_stack = ServiceBuilder::new()
@@ -43,11 +44,8 @@ pub async fn build_router(config: Config, pg_pool: PgPool, redis_pool: RedisPool
         );
 
     Router::new()
-        .route("/health", get(health_handler))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            rate_limit_middleware,
-        ))
+        .merge(crate::routes::build_routes())
+        .layer(middleware::from_fn_with_state(state.clone(), rate_limit_middleware))
         .layer(middleware_stack)
         .with_state(state)
 }

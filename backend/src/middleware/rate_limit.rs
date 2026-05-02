@@ -37,7 +37,7 @@ pub async fn rate_limit_middleware(
     let identifier = extract_identifier(&req);
     let key = format!("rate_limit:{}:{}", identifier, group);
 
-    match check_rate_limit(&state.redis_pool, &key, limit, window_secs).await {
+    match check_rate_limit(&state.redis, &key, limit, window_secs).await {
         Ok(true) => next.run(req).await,
         Ok(false) => {
             let retry_after = window_secs.to_string();
@@ -187,8 +187,9 @@ mod tests {
 
         let state = Arc::new(AppState {
             config: test_config(),
-            pg_pool: PgPool::connect_lazy("postgres://dummy").unwrap(),
-            redis_pool,
+            db: PgPool::connect_lazy("postgres://dummy").unwrap(),
+            redis: redis_pool,
+            http_client: reqwest::Client::new(),
         });
 
         Router::new()

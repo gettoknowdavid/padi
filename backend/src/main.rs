@@ -3,11 +3,10 @@ pub mod cache;
 mod config;
 pub mod db;
 pub mod errors;
-mod middleware;
-
-pub mod routes {
-    pub mod health;
-}
+pub mod middleware;
+pub mod auth;
+pub mod common;
+pub mod routes;
 
 use crate::app::build_router;
 use crate::cache::cache_redis_pool;
