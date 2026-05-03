@@ -1,4 +1,20 @@
+use once_cell::sync::Lazy;
+use regex::Regex;
 use validator::ValidationError;
+
+// Compiled once at startup, reused on every call
+static EMAIL_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\A[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\z").unwrap()
+});
+
+pub fn validate_email_format(email: &str) -> Result<(), ValidationError> {
+    if !EMAIL_REGEX.is_match(email) {
+        let message = std::borrow::Cow::Borrowed("Invalid email format");
+        Err(ValidationError::new("email").with_message(message))
+    } else {
+        Ok(())
+    }
+}
 
 pub fn validate_strong_password(password: &str) -> Result<(), ValidationError> {
     let mut errors: Vec<&str> = Vec::new();

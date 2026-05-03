@@ -1,26 +1,32 @@
 use crate::app::AppState;
 use crate::errors::AppError;
 use crate::features::auth::password::hash_password;
-use crate::features::auth::repository::{create_audit_log, create_user, user_exists};
+use crate::features::auth::repository::AuthRepository;
 use crate::features::auth::{RegisterRequest, UserResponse};
+use anyhow::Result;
+use deadpool_redis::Pool as RedisPool;
+use sqlx::PgPool;
+use std::sync::Arc;
 use uuid::Uuid;
 
-pub struct AuthService;
+pub struct AuthService {
+    repo: AuthRepository,
+}
 
 impl AuthService {
+    pub fn new(database: Arc<PgPool>, redis: Arc<RedisPool>) -> Self {
+        Self {
+            repo: AuthRepository::new(database, redis),
+        }
+    }
+
     pub async fn register(
+        &self,
         app: &AppState,
         body: RegisterRequest,
         ip: Option<String>,
     ) -> Result<UserResponse, AppError> {
-        let db = app.db.clone();
-
-        let exists = user_exists(&db, &body.email).await.map_err(|e| {
-            tracing::error!("Database error while checking email: {:?}", e);
-            AppError::Internal("Internal server error".to_string())
-        })?;
-
-        if exists {
+        if self.repo.user_exists(&body.email).await? {
             return Err(AppError::BadRequest(
                 "A user with this email already exists".to_string(),
             ));
@@ -31,30 +37,9 @@ impl AuthService {
             AppError::Internal("Failed to hash password".to_string())
         })?;
 
-        let new_user = create_user(&db, &body, hash_pwd).await.map_err(|e| {
-            tracing::error!("Failed to create user: {:?}", e);
-            AppError::Internal("Failed to create user".to_string())
-        })?;
+        let new_user = self.repo.create_user(&body, hash_pwd).await?;
 
-        let verification_token = Uuid::new_v4().to_string();
-        let redis_key = format!("email_verify:{}", verification_token);
-        let user_id_str = new_user.id.to_string();
-
-        let mut redis_conn = app.redis.get().await.map_err(|error| {
-            tracing::error!("Failed to get Redis connection: {:?}", error);
-            AppError::Internal("Failed to create verification token".to_string())
-        })?;
-        redis::cmd("SET")
-            .arg(&redis_key)
-            .arg(&user_id_str)
-            .arg("EX")
-            .arg(86400u64)
-            .query_async::<()>(&mut redis_conn)
-            .await
-            .map_err(|error| {
-                tracing::error!("Failed to store verification token in Redis: {:?}", error);
-                AppError::Internal("Failed to create verification token".to_string())
-            })?;
+        let verification_token = self.repo.store_verification_token(new_user.id).await?;
 
         let verification_link = format!(
             "{}/auth/verify-email?token={}",
@@ -87,10 +72,40 @@ impl AuthService {
             tracing::error!("Failed to send verification email: {:?}", error);
         }
 
-        if let Err(e) = create_audit_log(&db, new_user.id, "user.registered", ip).await {
+        if let Err(e) = self
+            .repo
+            .create_audit_log(new_user.id, "user.registered", ip)
+            .await
+        {
             tracing::error!("Failed to write audit log: {:?}", e);
         };
 
         Ok(new_user.into_response())
+    }
+
+    pub async fn verify_email(&self, token: &str, ip: Option<String>) -> Result<(), AppError> {
+        let verification_token = self.repo.get_verification_token(token).await?;
+
+        let user_id_str = verification_token
+            .ok_or_else(|| AppError::BadRequest("Invalid or expired token".to_string()))?;
+
+        let user_id = Uuid::parse_str(&user_id_str).map_err(|error| {
+            tracing::error!("Failed to parse user ID from token: {:?}", error);
+            AppError::Internal("Invalid token payload".to_string())
+        })?;
+
+        self.repo.set_user_verified(&user_id).await?;
+
+        self.repo.delete_verification_token(token).await?;
+
+        if let Err(e) = self
+            .repo
+            .create_audit_log(user_id, "user.verified", ip)
+            .await
+        {
+            tracing::error!("Failed to write audit log: {:?}", e);
+        };
+
+        Ok(())
     }
 }

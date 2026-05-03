@@ -1,4 +1,4 @@
-use crate::features::auth::validators::validate_strong_password;
+use crate::features::auth::validators::{validate_email_format, validate_strong_password};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -7,7 +7,7 @@ use validator::Validate;
 // Requests
 #[derive(Debug, Validate, Deserialize)]
 pub struct RegisterRequest {
-    #[validate(email(message = "Invalid email format"))]
+    #[validate(custom(function = "validate_email_format"))]
     pub email: String,
 
     #[validate(custom(function = "validate_strong_password"))]
@@ -21,6 +21,11 @@ pub struct RegisterRequest {
     pub full_name: String,
 
     pub phone: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct VerifyEmailRequest {
+    pub token: String,
 }
 
 // Responses

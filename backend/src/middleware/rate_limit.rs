@@ -135,6 +135,7 @@ mod tests {
     use crate::app::AppState;
     use crate::cache::cache_redis_pool;
     use crate::config::Config;
+    use crate::features::auth::service::AuthService;
     use crate::middleware::rate_limit::rate_limit_middleware;
     use axum::{
         Router,
@@ -185,11 +186,15 @@ mod tests {
             StatusCode::OK
         }
 
+        let database = Arc::new(PgPool::connect_lazy("postgres://dummy").unwrap());
+        let redis = Arc::new(redis_pool);
+
         let state = Arc::new(AppState {
-            config: test_config(),
-            db: PgPool::connect_lazy("postgres://dummy").unwrap(),
-            redis: redis_pool,
+            auth_service: AuthService::new(database.clone(), redis.clone()),
             http_client: reqwest::Client::new(),
+            config: test_config(),
+            database,
+            redis,
         });
 
         Router::new()

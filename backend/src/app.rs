@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::features::auth::service::AuthService;
 use crate::middleware::rate_limit::rate_limit_middleware;
 use axum::{Router, http::StatusCode, middleware};
 use deadpool_redis::Pool as RedisPool;
@@ -16,18 +17,23 @@ use tower_http::{
 /// handler threads
 pub struct AppState {
     pub config: Config,
-    pub db: PgPool,
-    pub redis: RedisPool,
+    pub database: Arc<PgPool>,
+    pub redis: Arc<RedisPool>,
     pub http_client: Client,
+    pub auth_service: AuthService,
 }
 
 /// Build the application router
 pub async fn build_router(config: Config, pg_pool: PgPool, redis_pool: RedisPool) -> Router {
+    let database = Arc::new(pg_pool);
+    let redis = Arc::new(redis_pool);
+
     let state = Arc::new(AppState {
-        config,
-        db: pg_pool,
-        redis: redis_pool,
+        auth_service: AuthService::new(database.clone(), redis.clone()),
         http_client: Client::new(),
+        config,
+        database,
+        redis,
     });
 
     let middleware_stack = ServiceBuilder::new()
@@ -45,7 +51,10 @@ pub async fn build_router(config: Config, pg_pool: PgPool, redis_pool: RedisPool
 
     Router::new()
         .merge(crate::routes::build_routes())
-        // .layer(middleware::from_fn_with_state(state.clone(), rate_limit_middleware))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ))
         .layer(middleware_stack)
         .with_state(state)
 }
