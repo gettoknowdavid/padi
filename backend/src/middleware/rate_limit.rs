@@ -37,7 +37,7 @@ pub async fn rate_limit_middleware(
     let identifier = extract_identifier(&req);
     let key = format!("rate_limit:{}:{}", identifier, group);
 
-    match check_rate_limit(&state.redis_pool, &key, limit, window_secs).await {
+    match check_rate_limit(&state.redis, &key, limit, window_secs).await {
         Ok(true) => next.run(req).await,
         Ok(false) => {
             let retry_after = window_secs.to_string();
@@ -134,7 +134,9 @@ mod tests {
     use super::*;
     use crate::app::AppState;
     use crate::cache::cache_redis_pool;
+    use crate::common::email::EmailService;
     use crate::config::Config;
+    use crate::features::auth::service::AuthService;
     use crate::middleware::rate_limit::rate_limit_middleware;
     use axum::{
         Router,
@@ -144,6 +146,7 @@ mod tests {
         routing::get,
     };
     use deadpool_redis::Pool;
+    use reqwest::Client;
     use sqlx::PgPool;
     use std::sync::Arc;
     use tower::ServiceExt;
@@ -185,10 +188,16 @@ mod tests {
             StatusCode::OK
         }
 
+        let database = Arc::new(PgPool::connect_lazy("postgres://dummy").unwrap());
+        let redis = Arc::new(redis_pool);
+
         let state = Arc::new(AppState {
+            email: EmailService::new(Client::new(), test_config().resend_api_key.clone()),
+            auth_service: AuthService::new(database.clone(), redis.clone()),
+            http_client: Client::new(),
             config: test_config(),
-            pg_pool: PgPool::connect_lazy("postgres://dummy").unwrap(),
-            redis_pool,
+            database,
+            redis,
         });
 
         Router::new()

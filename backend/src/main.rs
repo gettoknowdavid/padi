@@ -1,13 +1,12 @@
 pub mod app;
 pub mod cache;
+pub mod common;
 mod config;
 pub mod db;
 pub mod errors;
-mod middleware;
-
-pub mod routes {
-    pub mod health;
-}
+pub mod features;
+pub mod middleware;
+pub mod routes;
 
 use crate::app::build_router;
 use crate::cache::cache_redis_pool;

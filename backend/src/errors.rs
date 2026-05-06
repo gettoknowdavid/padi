@@ -3,39 +3,154 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 use thiserror::Error;
+use validator::ValidationErrors;
 
 #[derive(Error, Debug)]
 pub enum AppError {
+    #[error("Database error")]
+    Database(#[from] sqlx::Error),
+
+    #[error("Redis Pool error")]
+    RedisPool(#[from] deadpool_redis::PoolError),
+
+    #[error("Redis error")]
+    Redis(#[from] redis::RedisError),
+
     #[error("Not found")]
-    NotFound,
+    NotFound(String),
 
     #[error("You are unauthorized")]
-    Unauthorized,
+    Unauthorized(String),
 
     #[error("Bad request")]
-    BadRequest,
+    BadRequest(String),
 
     #[error("Internal error")]
-    Internal,
+    Internal(String),
+
+    #[error("Validation error")]
+    ValidatorError(ValidationErrors),
+
+    #[error("Conflict")]
+    Conflict(String),
+
+    #[error("Token expired")]
+    TokenExpired(String),
+}
+
+impl From<ValidationErrors> for AppError {
+    fn from(errors: ValidationErrors) -> Self {
+        AppError::ValidatorError(errors)
+    }
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let status = match &self {
-            AppError::NotFound => StatusCode::NOT_FOUND,
-            AppError::Unauthorized => StatusCode::UNAUTHORIZED,
-            AppError::BadRequest => StatusCode::BAD_REQUEST,
-            AppError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-        };
-
-        let body = Json(json!({
-            "data": null,
-            "meta": null,
-            "error": {
-                "message": self.to_string(),
+        match &self {
+            AppError::Database(_) => {
+                tracing::error!("Database error: {:?}", self);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
             }
-        }));
 
-        (status, body).into_response()
+            AppError::RedisPool(_) => {
+                tracing::error!("Redis Pool error: {:?}", self);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+
+            AppError::Redis(_) => {
+                tracing::error!("Redis error: {:?}", self);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+
+            AppError::NotFound(message) => {
+                error_response(StatusCode::NOT_FOUND, "NOT_FOUND", message)
+            }
+
+            AppError::Unauthorized(message) => {
+                error_response(StatusCode::UNAUTHORIZED, "UNAUTHORIZED", message)
+            }
+
+            AppError::BadRequest(message) => {
+                error_response(StatusCode::BAD_REQUEST, "BAD_REQUEST", message)
+            }
+
+            AppError::Internal(message) => {
+                tracing::error!("Internal error: {}", message);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+
+            AppError::Conflict(message) => {
+                error_response(StatusCode::CONFLICT, "CONFLICT", message)
+            }
+
+            AppError::TokenExpired(message) => {
+                error_response(StatusCode::UNAUTHORIZED, "TOKEN_EXPIRED", message)
+            }
+
+            AppError::ValidatorError(validation_errors) => {
+                validation_error_response(validation_errors.clone())
+            }
+        }
     }
+}
+
+fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
+    let body = Json(json!({
+        "data": null,
+        "meta": null,
+        "error": {
+            "code": code,
+            "message": message,
+        }
+    }));
+
+    (status, body).into_response()
+}
+
+fn validation_error_response(validation_errors: ValidationErrors) -> Response {
+    // Convert ValidationErrors into a nice format for the frontend
+    let error_map: std::collections::HashMap<String, Vec<String>> = validation_errors
+        .field_errors()
+        .iter()
+        .map(|(field, errors)| {
+            let messages: Vec<String> = errors
+                .iter()
+                .map(|err| {
+                    err.message
+                        .as_deref()
+                        .unwrap_or("Invalid value")
+                        .to_string()
+                })
+                .collect();
+            (field.to_string(), messages)
+        })
+        .collect();
+
+    let body = Json(json!({
+        "data": null,
+        "meta": null,
+        "error": {
+            "code": "VALIDATION_ERROR",
+            "message": "One or more fields are invalid",
+            "fields": error_map
+        }
+    }));
+
+    (StatusCode::BAD_REQUEST, body).into_response()
 }
