@@ -24,6 +24,9 @@ pub enum AppError {
 
     #[error("Conflict")]
     Conflict(String),
+
+    #[error("Token expired")]
+    TokenExpired(String),
 }
 
 impl From<ValidationErrors> for AppError {
@@ -49,6 +52,9 @@ impl IntoResponse for AppError {
             }
             AppError::Conflict(message) => {
                 error_response(StatusCode::CONFLICT, "CONFLICT", message)
+            }
+            AppError::TokenExpired(message) => {
+                error_response(StatusCode::UNAUTHORIZED, "TOKEN_EXPIRED", message)
             }
             AppError::ValidatorError(validation_errors) => {
                 validation_error_response(validation_errors.clone())

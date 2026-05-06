@@ -1,6 +1,6 @@
 use crate::errors::AppError;
+use crate::features::auth::RegisterRequest;
 use crate::features::auth::models::User;
-use crate::features::auth::{RegisterRequest, UserResponse};
 use anyhow::Result;
 use deadpool_redis::Pool as RedisPool;
 use sqlx::{Error, PgPool};
@@ -24,19 +24,22 @@ impl AuthRepository {
         Self { database, redis }
     }
 
-    pub async fn find_user_by_email(&self, email: &str) -> Result<Option<UserResponse>> {
-        let user = sqlx::query_as!(
-            UserResponse,
+    pub async fn fetch_user_by_email(&self, email: &str) -> Result<Option<User>, AppError> {
+        sqlx::query_as!(
+            User,
             r#"
-            SELECT id, email, phone, full_name, is_verified
+            SELECT *
             FROM users
             WHERE email = $1
             "#,
             email
         )
         .fetch_optional(&*self.database)
-        .await?;
-        Ok(user)
+        .await
+        .map_err(|error| {
+            tracing::error!("Error fetching user from DB: {:?}", error);
+            AppError::Internal("Error fetching user from DB".to_string())
+        })
     }
 
     pub async fn user_exists(&self, email: &str) -> Result<bool, AppError> {
@@ -96,7 +99,7 @@ impl AuthRepository {
         user_id: Uuid,
         action: &str,
         ip_address: Option<String>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), AppError> {
         sqlx::query!(
             r#"
             INSERT INTO audit_logs (id, user_id, action, resource_type, resource_id, ip_address)
@@ -107,6 +110,54 @@ impl AuthRepository {
             action,
             user_id,
             ip_address.as_deref()
+        )
+        .execute(&*self.database)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to write audit log: {:?}", e);
+            AppError::Internal("Failed to write audit log".to_string())
+        })?;
+        Ok(())
+    }
+
+    pub async fn update_login_attempt(&self, user_id: Uuid) -> Result<()> {
+        sqlx::query!(
+            "UPDATE users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = $1",
+            user_id
+        )
+        .execute(&*self.database)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn reset_login_attempts_and_lock(&self, user_id: Uuid) -> Result<()> {
+        sqlx::query!(
+            "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1",
+            user_id
+        )
+        .execute(&*self.database)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn lock_user_account(&self, user_id: Uuid) -> Result<(), Error> {
+        let now = chrono::Utc::now();
+        let locked_until_value = now + chrono::Duration::hours(1);
+        sqlx::query!(
+            r#"UPDATE users SET locked_until = $1 WHERE id = $2"#,
+            locked_until_value,
+            user_id
+        )
+        .execute(&*self.database)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_password_hash(&self, user_id: &Uuid, hash: &str) -> Result<(), Error> {
+        sqlx::query!(
+            "UPDATE users SET password_hash = $1, failed_login_attempts = 0, locked_until = NULL WHERE id = $2",
+            hash,
+            user_id
         )
         .execute(&*self.database)
         .await?;
@@ -161,5 +212,54 @@ impl AuthRepository {
                 tracing::error!("Failed to get token: {:?}", error);
                 AppError::Internal("Failed to fetch verification token".to_string())
             })
+    }
+
+    pub async fn delete_refresh_token(&self, token: &str) -> Result<(), AppError> {
+        let key = format!("refresh_token:{}", token);
+        let mut conn = self.redis_conn().await?;
+        redis::cmd("DEL")
+            .arg(&key)
+            .query_async::<()>(&mut conn)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to delete refresh token: {:?}", e);
+                AppError::Internal("Failed to delete refresh token".to_string())
+            })
+    }
+
+    pub async fn revoke_refresh_tokens(&self, user_id: &str) -> Result<(), AppError> {
+        let mut conn = self.redis_conn().await?;
+
+        let keys: Vec<String> = redis::cmd("SCAN")
+            .arg(0u64)
+            .arg("MATCH")
+            .arg("refresh_token:*")
+            .arg("COUNT")
+            .arg(100u64)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to scan Redis keys: {:?}", e);
+                AppError::Internal("Failed to scan tokens".to_string())
+            })?;
+
+        for key in keys {
+            // GET the value (user_id stored against this token)
+            let value: Option<String> = redis::cmd("GET")
+                .arg(&key)
+                .query_async(&mut conn)
+                .await
+                .unwrap_or(None);
+
+            // Only delete if it belongs to this user
+            if value.as_deref() == Some(user_id) {
+                let _ = redis::cmd("DEL")
+                    .arg(&key)
+                    .query_async::<()>(&mut conn)
+                    .await;
+            }
+        }
+
+        Ok(())
     }
 }

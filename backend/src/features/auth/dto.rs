@@ -4,9 +4,52 @@ use sqlx::FromRow;
 use uuid::Uuid;
 use validator::Validate;
 
+// Helpers
+mod lowercase_string {
+    use serde::{self, Deserialize, Deserializer};
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<String, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(s.to_lowercase())
+    }
+}
+
 // Requests
 #[derive(Debug, Validate, Deserialize)]
+pub struct LoginRequest {
+    #[serde(deserialize_with = "lowercase_string::deserialize")]
+    #[validate(custom(function = "validate_email_format"))]
+    pub email: String,
+
+    #[validate(length(min = 1, message = "Password cannot be empty"))]
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LogoutRequest {
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Validate, Deserialize)]
+pub struct ForgotPasswordRequest {
+    #[serde(deserialize_with = "lowercase_string::deserialize")]
+    #[validate(custom(function = "validate_email_format"))]
+    pub email: String,
+}
+
+#[derive(Debug, Validate, Deserialize)]
+pub struct ResetPasswordRequest {
+    pub token: String,
+    
+    #[validate(custom(function = "validate_strong_password"))]
+    pub new_password: String,
+}
+
+#[derive(Debug, Validate, Deserialize)]
 pub struct RegisterRequest {
+    #[serde(deserialize_with = "lowercase_string::deserialize")]
     #[validate(custom(function = "validate_email_format"))]
     pub email: String,
 
