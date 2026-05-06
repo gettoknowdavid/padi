@@ -1,9 +1,12 @@
 use crate::errors::AppError;
-use crate::features::auth::RegisterRequest;
+use crate::features::auth::constants::{
+    ACCOUNT_LOCK_HOURS, EMAIL_VERIFY_TTL_SECS, PWD_RESET_TTL_SECS, REDIS_EMAIL_VERIFY_PREFIX,
+    REDIS_PWD_RESET_PREFIX, REDIS_REFRESH_TOKEN_PREFIX, REFRESH_TOKEN_TTL_SECS,
+};
+use crate::features::auth::dto::RegisterRequest;
 use crate::features::auth::models::User;
-use anyhow::Result;
-use deadpool_redis::Pool as RedisPool;
-use sqlx::{Error, PgPool};
+use deadpool_redis::{Connection, Pool as RedisPool};
+use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -13,53 +16,34 @@ pub struct AuthRepository {
 }
 
 impl AuthRepository {
-    async fn redis_conn(&self) -> Result<deadpool_redis::Connection, AppError> {
-        self.redis.get().await.map_err(|e| {
-            tracing::error!("Redis connection failed: {:?}", e);
-            AppError::Internal("Redis connection failed".to_string())
-        })
-    }
-
     pub fn new(database: Arc<PgPool>, redis: Arc<RedisPool>) -> Self {
         Self { database, redis }
     }
 
-    pub async fn fetch_user_by_email(&self, email: &str) -> Result<Option<User>, AppError> {
-        sqlx::query_as!(
-            User,
-            r#"
-            SELECT *
-            FROM users
-            WHERE email = $1
-            "#,
-            email
-        )
-        .fetch_optional(&*self.database)
-        .await
-        .map_err(|error| {
-            tracing::error!("Error fetching user from DB: {:?}", error);
-            AppError::Internal("Error fetching user from DB".to_string())
+    async fn redis_conn(&self) -> Result<Connection, AppError> {
+        self.redis.get().await.map_err(|e| {
+            tracing::error!("Failed to get Redis connection: {:?}", e);
+            AppError::RedisPool(e)
         })
     }
 
-    pub async fn user_exists(&self, email: &str) -> Result<bool, AppError> {
+    // ── User queries ─────────────────────────────────────────
+    pub async fn find_by_email(&self, email: &str) -> Result<Option<User>, AppError> {
+        sqlx::query_as!(User, r#"SELECT * FROM users WHERE email = $1"#, email)
+            .fetch_optional(&*self.database)
+            .await
+            .map_err(AppError::Database)
+    }
+    pub async fn exists(&self, email: &str) -> Result<bool, AppError> {
         sqlx::query_scalar!(
             r#"SELECT EXISTS(SELECT 1 FROM users WHERE email = $1) as "exists!""#,
             email
         )
         .fetch_one(&*self.database)
         .await
-        .map_err(|e| {
-            tracing::error!("DB error checking email: {:?}", e);
-            AppError::Internal("Internal server error".to_string())
-        })
+        .map_err(AppError::Database)
     }
-
-    pub async fn create_user(
-        &self,
-        req: &RegisterRequest,
-        password_hash: String,
-    ) -> Result<User, AppError> {
+    pub async fn create(&self, req: &RegisterRequest, hash: String) -> Result<User, AppError> {
         sqlx::query_as!(
             User,
             r#"
@@ -70,188 +54,224 @@ impl AuthRepository {
             "#,
             Uuid::new_v4(),
             &req.email,
-            password_hash,
+            hash,
             &req.full_name,
             req.phone.as_deref(),
             false
         )
         .fetch_one(&*self.database)
         .await
-        .map_err(|e| {
-            tracing::error!("Failed to create user: {:?}", e);
-            AppError::Internal("Failed to create user".to_string())
-        })
+        .map_err(AppError::Database)
     }
-
-    pub async fn set_user_verified(&self, user_id: &Uuid) -> Result<(), AppError> {
+    pub async fn set_verified(&self, user_id: &Uuid) -> Result<(), AppError> {
         sqlx::query!("UPDATE users SET is_verified = true WHERE id = $1", user_id)
             .execute(&*self.database)
             .await
-            .map_err(|error| {
-                tracing::error!("Failed to verify user: {:?}", error);
-                AppError::Internal("Failed to verify user".to_string())
-            })?;
+            .map_err(AppError::Database)?;
         Ok(())
     }
-
-    pub async fn create_audit_log(
-        &self,
-        user_id: Uuid,
-        action: &str,
-        ip_address: Option<String>,
-    ) -> Result<(), AppError> {
+    pub async fn update_password(&self, user_id: &Uuid, hash: &str) -> Result<(), AppError> {
         sqlx::query!(
-            r#"
-            INSERT INTO audit_logs (id, user_id, action, resource_type, resource_id, ip_address)
-            VALUES ($1, $2, $3, 'user', $4, $5)
-            "#,
-            Uuid::new_v4(),
-            user_id,
-            action,
-            user_id,
-            ip_address.as_deref()
+            r#"UPDATE users SET password_hash = $1, failed_login_attempts = 0, locked_until = NULL WHERE id = $2"#,
+            hash,
+            user_id
         )
-        .execute(&*self.database)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to write audit log: {:?}", e);
-            AppError::Internal("Failed to write audit log".to_string())
-        })?;
+            .execute(&*self.database)
+            .await
+            .map_err(AppError::Database)?;
         Ok(())
     }
-
-    pub async fn update_login_attempt(&self, user_id: Uuid) -> Result<()> {
+    pub async fn increment_failed_attempts(&self, user_id: Uuid) -> Result<(), AppError> {
         sqlx::query!(
             "UPDATE users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = $1",
             user_id
         )
         .execute(&*self.database)
-        .await?;
+        .await
+        .map_err(AppError::Database)?;
         Ok(())
     }
-
-    pub async fn reset_login_attempts_and_lock(&self, user_id: Uuid) -> Result<()> {
+    pub async fn reset_failed_attempts(&self, user_id: Uuid) -> Result<(), AppError> {
         sqlx::query!(
             "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1",
             user_id
         )
         .execute(&*self.database)
-        .await?;
+        .await
+        .map_err(AppError::Database)?;
         Ok(())
     }
-
-    pub async fn lock_user_account(&self, user_id: Uuid) -> Result<(), Error> {
-        let now = chrono::Utc::now();
-        let locked_until_value = now + chrono::Duration::hours(1);
+    pub async fn lock_account(&self, user_id: Uuid) -> Result<(), AppError> {
+        let locked_until = chrono::Utc::now() + chrono::Duration::hours(ACCOUNT_LOCK_HOURS);
         sqlx::query!(
             r#"UPDATE users SET locked_until = $1 WHERE id = $2"#,
-            locked_until_value,
+            locked_until,
             user_id
         )
         .execute(&*self.database)
-        .await?;
+        .await
+        .map_err(AppError::Database)?;
         Ok(())
     }
 
-    pub async fn update_password_hash(&self, user_id: &Uuid, hash: &str) -> Result<(), Error> {
+    // ── Audit queries ─────────────────────────────────────────
+    pub async fn audit(
+        &self,
+        user_id: Uuid,
+        action: &str,
+        ip: Option<String>,
+    ) -> Result<(), AppError> {
         sqlx::query!(
-            "UPDATE users SET password_hash = $1, failed_login_attempts = 0, locked_until = NULL WHERE id = $2",
-            hash,
-            user_id
+            r#"
+            INSERT INTO audit_logs (id, org_id, user_id, action, resource_type, resource_id, ip_address)
+            VALUES ($1, NULL, $2, $3, 'user', $4, $5)
+            "#,
+            Uuid::new_v4(), user_id, action, user_id, ip.as_deref()
         )
         .execute(&*self.database)
-        .await?;
+        .await
+        .map_err(AppError::Database)?;
         Ok(())
     }
 
-    pub async fn store_verification_token(&self, user_id: Uuid) -> Result<String, AppError> {
+    // ── Email verification tokens (Redis) ────────────────────
+    pub async fn store_verification_token(&self, user_id: &Uuid) -> Result<String, AppError> {
         let token = Uuid::new_v4().to_string();
-        let key = format!("email_verify:{}", token);
-        let mut conn = self.redis.get().await.map_err(|error| {
-            tracing::error!("Failed to get Redis connection: {:?}", error);
-            AppError::Internal("Failed to create verification token".to_string())
-        })?;
+        let key = format!("{}{}", REDIS_EMAIL_VERIFY_PREFIX, token);
+        let mut conn = self.redis_conn().await?;
         redis::cmd("SET")
             .arg(&key)
             .arg(user_id.to_string())
             .arg("EX")
-            .arg(86400u64)
+            .arg(EMAIL_VERIFY_TTL_SECS)
             .query_async::<()>(&mut conn)
             .await
-            .map_err(|error| {
-                tracing::error!("Failed to store token: {:?}", error);
-                AppError::Internal("Failed to store verification token".to_string())
-            })?;
+            .map_err(AppError::Redis)?;
         Ok(token)
     }
-
     pub async fn get_verification_token(&self, token: &str) -> Result<Option<String>, AppError> {
-        let key = format!("email_verify:{}", token);
-        let mut conn = self.redis.get().await.map_err(|e| {
-            tracing::error!("Redis connection failed: {:?}", e);
-            AppError::Internal("Redis connection failed".to_string())
-        })?;
+        let key = format!("{}{}", REDIS_EMAIL_VERIFY_PREFIX, token);
+        let mut conn = self.redis_conn().await?;
         redis::cmd("GET")
             .arg(&key)
             .query_async(&mut conn)
             .await
-            .map_err(|error| {
-                tracing::error!("Failed to get token: {:?}", error);
-                AppError::Internal("Failed to fetch verification token".to_string())
-            })
+            .map_err(AppError::Redis)
     }
-
     pub async fn delete_verification_token(&self, token: &str) -> Result<(), AppError> {
-        let key = format!("email_verify:{}", token);
+        let key = format!("{}{}", REDIS_EMAIL_VERIFY_PREFIX, token);
         let mut conn = self.redis_conn().await?;
         redis::cmd("DEL")
             .arg(key)
             .query_async::<()>(&mut conn)
             .await
-            .map_err(|error| {
-                tracing::error!("Failed to get token: {:?}", error);
-                AppError::Internal("Failed to fetch verification token".to_string())
-            })
+            .map_err(AppError::Redis)
     }
 
-    pub async fn delete_refresh_token(&self, token: &str) -> Result<(), AppError> {
-        let key = format!("refresh_token:{}", token);
+    // ── Password reset tokens (Redis) ────────────────────────
+    pub async fn store_reset_token(&self, user_id: &str) -> Result<String, AppError> {
+        let token = Uuid::new_v4().to_string();
+        let key = format!("{}{}", REDIS_PWD_RESET_PREFIX, token);
+        let mut conn = self.redis_conn().await?;
+        redis::cmd("SET")
+            .arg(&key)
+            .arg(user_id)
+            .arg("EX")
+            .arg(PWD_RESET_TTL_SECS)
+            .query_async::<()>(&mut conn)
+            .await
+            .map_err(AppError::Redis)?;
+        Ok(token)
+    }
+    pub async fn get_reset_token(&self, token: &str) -> Result<Option<String>, AppError> {
+        let key = format!("{}{}", REDIS_PWD_RESET_PREFIX, token);
+        let mut conn = self.redis_conn().await?;
+        redis::cmd("GET")
+            .arg(&key)
+            .query_async(&mut conn)
+            .await
+            .map_err(AppError::Redis)
+    }
+    pub async fn delete_reset_token(&self, token: &str) -> Result<(), AppError> {
+        let key = format!("{}{}", REDIS_PWD_RESET_PREFIX, token);
         let mut conn = self.redis_conn().await?;
         redis::cmd("DEL")
             .arg(&key)
             .query_async::<()>(&mut conn)
             .await
-            .map_err(|e| {
-                tracing::error!("Failed to delete refresh token: {:?}", e);
-                AppError::Internal("Failed to delete refresh token".to_string())
-            })
+            .map_err(AppError::Redis)
     }
 
-    pub async fn revoke_refresh_tokens(&self, user_id: &str) -> Result<(), AppError> {
+    // ── Session/Refresh tokens (Redis) ─────────────────────
+    pub async fn create_session(&self, user_id: &str) -> Result<String, AppError> {
+        let token = Uuid::new_v4().to_string();
+        let key = format!("{}{}", REDIS_REFRESH_TOKEN_PREFIX, token);
         let mut conn = self.redis_conn().await?;
+        redis::cmd("SET")
+            .arg(&key)
+            .arg(user_id)
+            .arg("EX")
+            .arg(REFRESH_TOKEN_TTL_SECS)
+            .query_async::<()>(&mut conn)
+            .await
+            .map_err(AppError::Redis)?;
+        Ok(token)
+    }
+    pub async fn delete_session(&self, token: &str) -> Result<(), AppError> {
+        let key = format!("{}{}", REDIS_REFRESH_TOKEN_PREFIX, token);
+        let mut conn = self.redis_conn().await?;
+        redis::cmd("DEL")
+            .arg(&key)
+            .query_async::<()>(&mut conn)
+            .await
+            .map_err(AppError::Redis)
+    }
+    pub async fn rotate_session(&self, old_token: &str) -> Result<(String, String), AppError> {
+        let key = format!("{}{}", REDIS_REFRESH_TOKEN_PREFIX, old_token);
+        let mut conn = self.redis_conn().await?;
+
+        let user_id: Option<String> = redis::cmd("GET")
+            .arg(&key)
+            .query_async(&mut conn)
+            .await
+            .map_err(AppError::Redis)?;
+
+        let user_id = user_id.ok_or_else(|| {
+            AppError::Unauthorized("Invalid or expired refresh token".to_string())
+        })?;
+
+        // Delete old token
+        redis::cmd("DEL")
+            .arg(&key)
+            .query_async::<()>(&mut conn)
+            .await
+            .map_err(AppError::Redis)?;
+
+        // Create new token
+        let new_token = self.create_session(&user_id).await?;
+        Ok((user_id, new_token))
+    }
+    pub async fn revoke_all_sessions(&self, user_id: &str) -> Result<(), AppError> {
+        let mut conn = self.redis_conn().await?;
+        let pattern = format!("{}*", REDIS_REFRESH_TOKEN_PREFIX);
 
         let keys: Vec<String> = redis::cmd("SCAN")
             .arg(0u64)
             .arg("MATCH")
-            .arg("refresh_token:*")
+            .arg(&pattern)
             .arg("COUNT")
             .arg(100u64)
             .query_async(&mut conn)
             .await
-            .map_err(|e| {
-                tracing::error!("Failed to scan Redis keys: {:?}", e);
-                AppError::Internal("Failed to scan tokens".to_string())
-            })?;
+            .map_err(AppError::Redis)?;
 
         for key in keys {
-            // GET the value (user_id stored against this token)
             let value: Option<String> = redis::cmd("GET")
                 .arg(&key)
                 .query_async(&mut conn)
                 .await
                 .unwrap_or(None);
 
-            // Only delete if it belongs to this user
             if value.as_deref() == Some(user_id) {
                 let _ = redis::cmd("DEL")
                     .arg(&key)

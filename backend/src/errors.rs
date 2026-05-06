@@ -7,6 +7,15 @@ use validator::ValidationErrors;
 
 #[derive(Error, Debug)]
 pub enum AppError {
+    #[error("Database error")]
+    Database(#[from] sqlx::Error),
+
+    #[error("Redis Pool error")]
+    RedisPool(#[from] deadpool_redis::PoolError),
+
+    #[error("Redis error")]
+    Redis(#[from] redis::RedisError),
+
     #[error("Not found")]
     NotFound(String),
 
@@ -38,24 +47,62 @@ impl From<ValidationErrors> for AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match &self {
+            AppError::Database(_) => {
+                tracing::error!("Database error: {:?}", self);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+
+            AppError::RedisPool(_) => {
+                tracing::error!("Redis Pool error: {:?}", self);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+
+            AppError::Redis(_) => {
+                tracing::error!("Redis error: {:?}", self);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+
             AppError::NotFound(message) => {
                 error_response(StatusCode::NOT_FOUND, "NOT_FOUND", message)
             }
+
             AppError::Unauthorized(message) => {
                 error_response(StatusCode::UNAUTHORIZED, "UNAUTHORIZED", message)
             }
+
             AppError::BadRequest(message) => {
                 error_response(StatusCode::BAD_REQUEST, "BAD_REQUEST", message)
             }
+
             AppError::Internal(message) => {
-                error_response(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", message)
+                tracing::error!("Internal error: {}", message);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
             }
+
             AppError::Conflict(message) => {
                 error_response(StatusCode::CONFLICT, "CONFLICT", message)
             }
+
             AppError::TokenExpired(message) => {
                 error_response(StatusCode::UNAUTHORIZED, "TOKEN_EXPIRED", message)
             }
+
             AppError::ValidatorError(validation_errors) => {
                 validation_error_response(validation_errors.clone())
             }

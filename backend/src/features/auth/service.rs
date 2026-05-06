@@ -2,14 +2,10 @@ use crate::app::AppState;
 use crate::errors::AppError;
 use crate::features::auth::jwt::{CreateTokenArgs, create_access_token};
 use crate::features::auth::password::{hash_password, verify_password};
-use crate::features::auth::repository::AuthRepository;
-use crate::features::auth::tokens::{
-    create_pwd_reset_token, create_refresh_token, delete_pwd_reset_token, delete_refresh_token,
-    get_pwd_reset_token,
-};
-use crate::features::auth::{
+use crate::features::auth::prelude::{
     AuthResponse, LoginRequest, RegisterRequest, ResetPasswordRequest, UserResponse,
 };
+use crate::features::auth::repository::AuthRepository;
 use anyhow::Result;
 use chrono::Utc;
 use deadpool_redis::Pool as RedisPool;
@@ -86,39 +82,32 @@ impl AuthService {
     pub async fn register(
         &self,
         app: &AppState,
-        body: RegisterRequest,
+        body: &RegisterRequest,
         ip: Option<String>,
     ) -> Result<UserResponse, AppError> {
-        if self.repo.user_exists(&body.email).await? {
+        if self.repo.exists(&body.email).await? {
             return Err(AppError::BadRequest(
                 "A user with this email already exists".to_string(),
             ));
         }
-
         let hash_pwd = hash_password(&body.password).map_err(|e| {
             tracing::error!("Failed to hash password: {:?}", e);
             AppError::Internal("Failed to hash password".to_string())
         })?;
-
-        let new_user = self.repo.create_user(&body, hash_pwd).await?;
-
-        let verification_token = self.repo.store_verification_token(new_user.id).await?;
+        let new_user = self.repo.create(body, hash_pwd).await?;
+        let verification_token = self.repo.store_verification_token(&new_user.id).await?;
 
         let verification_link = format!(
             "{}/auth/verify-email?token={}",
             app.config.frontend_url, verification_token
         );
 
-        self.send_email(&app, &body.email, "Confirm your Padi account", &format!(
+        app.email.send(&body.email, "Confirm your Padi account", &format!(
             "<p>Hi {},</p><p>Click the link below to verify your account:</p><p><a href='{}'>Verify Email</a></p><p>This link expires in 24 hours.</p>",
             &body.full_name, verification_link
-        )).await?;
+        )).await;
 
-        if let Err(e) = self
-            .repo
-            .create_audit_log(new_user.id, "user.registered", ip)
-            .await
-        {
+        if let Err(e) = self.repo.audit(new_user.id, "user.registered", ip).await {
             tracing::error!("Failed to write audit log: {:?}", e);
         };
 
@@ -136,15 +125,11 @@ impl AuthService {
             AppError::Internal("Invalid token payload".to_string())
         })?;
 
-        self.repo.set_user_verified(&user_id).await?;
+        self.repo.set_verified(&user_id).await?;
 
         self.repo.delete_verification_token(token).await?;
 
-        if let Err(e) = self
-            .repo
-            .create_audit_log(user_id, "user.verified", ip)
-            .await
-        {
+        if let Err(e) = self.repo.audit(user_id, "user.verified", ip).await {
             tracing::error!("Failed to write audit log: {:?}", e);
         };
 
@@ -154,12 +139,12 @@ impl AuthService {
     pub async fn login(
         &self,
         app: &AppState,
-        body: LoginRequest,
+        body: &LoginRequest,
         ip: Option<String>,
     ) -> Result<AuthResponse, AppError> {
         let user = self
             .repo
-            .fetch_user_by_email(&body.email)
+            .find_by_email(&body.email)
             .await?
             .ok_or_else(|| AppError::Unauthorized("Invalid email or password".to_string()))?;
 
@@ -185,12 +170,12 @@ impl AuthService {
         if !verify_password(&body.password, password_hash) {
             let new_attempts = user.failed_login_attempts + 1;
 
-            if let Err(e) = self.repo.update_login_attempt(user.id).await {
+            if let Err(e) = self.repo.increment_failed_attempts(user.id).await {
                 tracing::error!("Failed to update login attempts: {:?}", e);
             };
 
             if new_attempts >= 10 {
-                if let Err(e) = self.repo.lock_user_account(user.id).await {
+                if let Err(e) = self.repo.lock_account(user.id).await {
                     tracing::error!("Failed to lock user account: {:?}", e);
                 };
                 return Err(AppError::Unauthorized(
@@ -203,7 +188,7 @@ impl AuthService {
             ));
         }
 
-        if let Err(e) = self.repo.reset_login_attempts_and_lock(user.id).await {
+        if let Err(e) = self.repo.reset_failed_attempts(user.id).await {
             tracing::error!("Failed to update failed login attempts: {:?}", e);
         };
 
@@ -220,14 +205,9 @@ impl AuthService {
             AppError::Internal("Failed to create access token".to_string())
         })?;
 
-        let refresh_token = create_refresh_token(&app.redis, &user_id)
-            .await
-            .map_err(|error| {
-                tracing::error!("Failed to create refresh token: {:?}", error);
-                AppError::Internal("Failed to create refresh token".to_string())
-            })?;
+        let refresh_token = self.repo.create_session(&user_id).await?;
 
-        if let Err(e) = self.repo.create_audit_log(user.id, "user.login", ip).await {
+        if let Err(e) = self.repo.audit(user.id, "user.login", ip).await {
             tracing::error!("Failed to write audit log: {:?}", e);
         };
 
@@ -239,24 +219,24 @@ impl AuthService {
     }
 
     pub async fn logout(&self, refresh_token: &str) -> Result<(), AppError> {
-        self.repo.delete_refresh_token(refresh_token).await
+        self.repo.delete_session(refresh_token).await
     }
 
     pub async fn forgot_password(&self, app: &AppState, email: &str) -> Result<(), AppError> {
-        let user_option = self.repo.fetch_user_by_email(&email).await?;
+        let user_option = self.repo.find_by_email(email).await?;
 
         if let Some(user) = user_option {
-            let pwd_token = create_pwd_reset_token(&app.redis, &user.id.to_string()).await?;
+            let pwd_token = self.repo.store_reset_token(&user.id.to_string()).await?;
 
             let reset_link = format!(
                 "{}/auth/reset-password?token={}",
                 &app.config.frontend_url, pwd_token
             );
 
-            self.send_email(&app, &email, "Password Reset Request", &format!(
+            app.email.send(email, "Password Reset Request", &format!(
                 "<p>Click the link below to reset the password to your account:</p><p><a href='{}'>Password Reset</a></p><p>This link expires in 1 hour.</p>",
                 reset_link
-            )).await?;
+            )).await;
         }
 
         Ok(())
@@ -264,13 +244,14 @@ impl AuthService {
 
     pub async fn reset_password(
         &self,
-        app: &AppState,
-        body: ResetPasswordRequest,
+        body: &ResetPasswordRequest,
         ip: Option<String>,
     ) -> Result<(), AppError> {
         body.validate()?;
 
-        let value = get_pwd_reset_token(&app.redis, &body.token)
+        let value = self
+            .repo
+            .get_reset_token(&body.token)
             .await?
             .ok_or_else(|| AppError::BadRequest("Invalid or expired token".to_string()))?;
 
@@ -284,59 +265,13 @@ impl AuthService {
             AppError::Internal("Failed to hash password".to_string())
         })?;
 
-        self.repo
-            .update_password_hash(&user_id, &hash)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to update user's password hash: {:?}", e);
-                AppError::Internal("Could not update user's account".to_string())
-            })?;
+        self.repo.update_password(&user_id, &hash).await?;
 
-        delete_pwd_reset_token(&app.redis, &body.token)
-            .await
-            .map_err(|error| {
-                tracing::error!("Failed to delete password reset token: {:?}", error);
-                AppError::Internal("Failed to delete password reset token".to_string())
-            })?;
+        self.repo.delete_reset_token(&body.token).await?;
 
-        if let Err(e) = self
-            .repo
-            .create_audit_log(user_id, "user.pwd_reset", ip)
-            .await
-        {
+        if let Err(e) = self.repo.audit(user_id, "user.pwd_reset", ip).await {
             tracing::error!("Failed to write audit log: {:?}", e);
         };
-
-        Ok(())
-    }
-
-    async fn send_email(
-        &self,
-        app: &AppState,
-        to: &str,
-        subject: &str,
-        html: &str,
-    ) -> Result<(), AppError> {
-        let body = serde_json::json!({
-            "from": "Padi <noreply@yourpadiapp.com>",
-            "to": [to],
-            "subject": subject,
-            "html": html,
-        });
-
-        if let Err(e) = app
-            .http_client
-            .post("https://api.resend.com/emails")
-            .header(
-                "Authorization",
-                format!("Bearer {}", app.config.resend_api_key),
-            )
-            .json(&body)
-            .send()
-            .await
-        {
-            tracing::error!("Failed to send email to {}: {:?}", to, e);
-        }
 
         Ok(())
     }

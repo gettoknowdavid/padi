@@ -1,5 +1,5 @@
 use crate::common::utils::extract_ip_address;
-use crate::features::auth::{
+use crate::features::auth::prelude::{
     AuthResponse, ForgotPasswordRequest, LoginRequest, LogoutRequest, RegisterRequest,
     ResetPasswordRequest, UserResponse, VerifyEmailRequest,
 };
@@ -16,7 +16,7 @@ pub async fn register(
 ) -> Result<(StatusCode, Json<ApiResponse<UserResponse>>), AppError> {
     body.validate()?;
     let ip = extract_ip_address(&headers);
-    let user = app.auth_service.register(&app, body, ip).await?;
+    let user = app.auth_service.register(&app, &body, ip).await?;
     Ok((StatusCode::CREATED, Json(ApiResponse::ok(user))))
 }
 
@@ -40,7 +40,7 @@ pub async fn login(
 ) -> Result<(StatusCode, Json<ApiResponse<AuthResponse>>), AppError> {
     body.validate()?;
     let ip = extract_ip_address(&headers);
-    let user = app.auth_service.login(&app, body, ip).await?;
+    let user = app.auth_service.login(&app, &body, ip).await?;
     Ok((StatusCode::OK, Json(ApiResponse::ok(user))))
 }
 
@@ -70,6 +70,6 @@ pub async fn reset_password(
     Json(body): Json<ResetPasswordRequest>,
 ) -> Result<(StatusCode, Json<ApiResponse<()>>), AppError> {
     let ip = extract_ip_address(&headers);
-    app.auth_service.reset_password(&app, body, ip).await?;
+    app.auth_service.reset_password(&body, ip).await?;
     Ok((StatusCode::OK, Json(ApiResponse::ok(()))))
 }

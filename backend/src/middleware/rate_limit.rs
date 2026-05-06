@@ -134,6 +134,7 @@ mod tests {
     use super::*;
     use crate::app::AppState;
     use crate::cache::cache_redis_pool;
+    use crate::common::email::EmailService;
     use crate::config::Config;
     use crate::features::auth::service::AuthService;
     use crate::middleware::rate_limit::rate_limit_middleware;
@@ -145,6 +146,7 @@ mod tests {
         routing::get,
     };
     use deadpool_redis::Pool;
+    use reqwest::Client;
     use sqlx::PgPool;
     use std::sync::Arc;
     use tower::ServiceExt;
@@ -190,8 +192,9 @@ mod tests {
         let redis = Arc::new(redis_pool);
 
         let state = Arc::new(AppState {
+            email: EmailService::new(Client::new(), test_config().resend_api_key.clone()),
             auth_service: AuthService::new(database.clone(), redis.clone()),
-            http_client: reqwest::Client::new(),
+            http_client: Client::new(),
             config: test_config(),
             database,
             redis,

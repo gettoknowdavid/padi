@@ -12,6 +12,7 @@ use tower_http::{
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
+use crate::common::email::EmailService;
 
 /// Shared application state. Wrapping this in an [Arc] so it can cheaply be cloned across
 /// handler threads
@@ -20,6 +21,7 @@ pub struct AppState {
     pub database: Arc<PgPool>,
     pub redis: Arc<RedisPool>,
     pub http_client: Client,
+    pub email: EmailService,
     pub auth_service: AuthService,
 }
 
@@ -29,6 +31,7 @@ pub async fn build_router(config: Config, pg_pool: PgPool, redis_pool: RedisPool
     let redis = Arc::new(redis_pool);
 
     let state = Arc::new(AppState {
+        email: EmailService::new(Client::new(), config.resend_api_key.clone()),
         auth_service: AuthService::new(database.clone(), redis.clone()),
         http_client: Client::new(),
         config,

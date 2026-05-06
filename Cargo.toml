@@ -3,3 +3,9 @@ members = [
     "backend",
 ]
 resolver = "2"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"           # catches accidental .unwrap()
+expect_used = "warn"           # catches .expect() in non-test code
+todo = "warn"                  # reminds you of incomplete code
+dbg_macro = "warn"             # catches leftover dbg!() calls

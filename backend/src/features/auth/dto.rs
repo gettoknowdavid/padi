@@ -42,7 +42,7 @@ pub struct ForgotPasswordRequest {
 #[derive(Debug, Validate, Deserialize)]
 pub struct ResetPasswordRequest {
     pub token: String,
-    
+
     #[validate(custom(function = "validate_strong_password"))]
     pub new_password: String,
 }
@@ -72,6 +72,7 @@ pub struct VerifyEmailRequest {
 }
 
 // Responses
+#[must_use]
 #[derive(Debug, Serialize, FromRow)]
 pub struct UserResponse {
     pub id: Uuid,
@@ -81,6 +82,7 @@ pub struct UserResponse {
     pub is_verified: bool,
 }
 
+#[must_use]
 #[derive(Serialize)]
 pub struct AuthResponse {
     pub access_token: String,
