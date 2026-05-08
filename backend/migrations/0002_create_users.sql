@@ -2,10 +2,10 @@ CREATE TABLE public.users
 (
     id                    UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
 
-    email                 TEXT UNIQUE NOT NULL,
-    phone                 TEXT UNIQUE NOT NULL,
+    email                 TEXT UNIQUE NULL,
+    phone                 TEXT UNIQUE NULL,
 
-    full_name             TEXT        NOT NULL,
+    full_name             TEXT        NULL,
     avatar_url            TEXT        NULL,
 
     password_hash         TEXT        NULL,

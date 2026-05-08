@@ -8,6 +8,7 @@ use crate::features::auth::prelude::{
     AuthResponse, LoginRequest, RegisterRequest, ResetPasswordRequest, UserResponse,
 };
 use crate::features::auth::repository::AuthRepository;
+use crate::features::auth::utils::generate_otp;
 use crate::integrations::termii::send_otp;
 use anyhow::Result;
 use chrono::Utc;
@@ -279,28 +280,28 @@ impl AuthService {
         Ok(())
     }
 
-    pub async fn send_otp(
-        &self,
-        app: &AppState,
-        body: &SendOtpRequest,
-        ip: Option<String>,
-    ) -> Result<(), AppError> {
-        if let Ok(false) = self.repo.check_rate_limit(&body.phone).await {
-            return Err(AppError::BadRequest(
-                "Too many OTP requests from this phone number. Please try again later.".to_string(),
+    pub async fn send_otp(&self, app: &AppState, body: &SendOtpRequest) -> Result<(), AppError> {
+        let phone_number = PhoneNumber::normalize(&body.phone, body.country_code.as_deref())
+            .map_err(|_| AppError::BadRequest("Invalid phone number".to_string()))?;
+
+        let within_limit = self.repo.check_rate_limit(&phone_number).await?;
+
+        if !within_limit {
+            return Err(AppError::TooManyRequests(
+                "Too many OTP requests. Please try again later.".to_string(),
             ));
         }
 
-        let otp = self.repo.generate_otp();
+        let otp = generate_otp();
 
-        self.repo.store_phone_otp(&body.phone, &otp).await?;
+        self.repo.store_phone_otp(&phone_number, &otp).await?;
 
-        self.repo.reset_otp_attempts(&body.phone).await?;
+        self.repo.reset_otp_attempts(&phone_number).await?;
 
         send_otp(
             &app.http_client,
             &app.config.africas_talking_api_key,
-            &body.phone.e164,
+            &phone_number.e164.as_str(),
             otp.as_str(),
         )
         .await
@@ -308,16 +309,6 @@ impl AuthService {
             tracing::error!("Failed to send OTP: {:?}", e);
             AppError::Internal("Failed to send OTP".to_string())
         })?;
-
-        let user = self
-            .repo
-            .find_by_phone(&body.phone.e164)
-            .await?
-            .ok_or_else(|| AppError::BadRequest("Could not find user".to_string()))?;
-
-        if let Err(e) = self.repo.audit(user.id, "user.otp_sent", ip).await {
-            tracing::error!("Failed to write audit log: {:?}", e);
-        };
 
         Ok(())
     }
@@ -328,7 +319,12 @@ impl AuthService {
         body: &VerifyOtpRequest,
         ip: Option<String>,
     ) -> Result<AuthResponse, AppError> {
-        if let Some(attempts) = self.repo.check_otp_attempts(&body.phone).await? {
+        let phone_number = PhoneNumber::normalize(&body.phone, body.country_code.as_deref())
+            .map_err(|_| AppError::BadRequest("Invalid phone number".to_string()))?;
+
+        self.repo.increment_otp_attempts(&phone_number).await?;
+
+        if let Some(attempts) = self.repo.check_otp_attempts(&phone_number).await? {
             if attempts >= 3 {
                 return Err(AppError::TooManyRequests(
                     "Too many OTP attempts. Please try again later.".to_string(),
@@ -336,27 +332,22 @@ impl AuthService {
             };
         }
 
-        let otp = self.repo.get_otp(&body.phone).await?;
+        let otp = self.repo.get_otp(&phone_number).await?;
 
         if otp.is_none() {
             return Err(AppError::Unauthorized("Invalid or expired OTP".to_string()));
         }
 
-        self.repo.increment_otp_attempts(&body.phone).await?;
-
-        if otp.as_ref().unwrap() != body.otp.as_str() {
+        if otp.as_deref() != Some(&body.otp) {
             return Err(AppError::Unauthorized("Invalid OTP".to_string()));
         }
 
-        self.repo.delete_otp(&body.phone).await?;
+        self.repo.delete_otp(&phone_number).await?;
 
-        let user = self
-            .repo
-            .find_by_phone(&body.phone.e164)
-            .await?
-            .ok_or_else(|| AppError::BadRequest("Could not find user".to_string()))?;
-
-        self.repo.update_phone(&body.phone, &user.id).await?;
+        let user = match self.repo.find_by_phone(&phone_number).await? {
+            Some(existing) => existing,
+            None => self.repo.create_phone_user(&phone_number).await?, // new user
+        };
 
         let access_token = create_access_token(CreateTokenArgs {
             user_id: user.id.to_string(),

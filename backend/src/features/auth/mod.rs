@@ -10,3 +10,4 @@ pub mod handlers;
 pub mod middleware;
 pub mod prelude;
 pub mod service;
+pub mod utils;

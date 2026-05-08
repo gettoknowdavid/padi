@@ -1,7 +1,4 @@
-use crate::common::domain::phone_number::{CountryCode, PhoneNumber};
-use crate::features::auth::validators::{
-    validate_email_format, validate_phone, validate_strong_password,
-};
+use crate::features::auth::validators::{validate_email_format, validate_strong_password};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -66,10 +63,9 @@ pub struct RegisterRequest {
     ))]
     pub full_name: String,
 
-    #[validate(custom(function = "validate_phone"))]
-    pub phone: String,
+    pub phone: Option<String>,
 
-    pub phone_country: CountryCode,
+    pub phone_country: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -79,12 +75,14 @@ pub struct VerifyEmailRequest {
 
 #[derive(Deserialize)]
 pub struct SendOtpRequest {
-    pub phone: PhoneNumber,
+    pub phone: String,
+    pub country_code: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct VerifyOtpRequest {
-    pub phone: PhoneNumber,
+    pub phone: String,
+    pub country_code: Option<String>,
     pub otp: String,
 }
 
@@ -95,7 +93,7 @@ pub struct UserResponse {
     pub id: Uuid,
     pub email: Option<String>,
     pub phone: Option<String>,
-    pub full_name: String,
+    pub full_name: Option<String>,
     pub is_verified: bool,
 }
 

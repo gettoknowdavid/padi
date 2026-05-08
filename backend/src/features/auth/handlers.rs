@@ -77,11 +77,9 @@ pub async fn reset_password(
 
 pub async fn send_otp(
     State(app): State<AppState>,
-    headers: HeaderMap,
     Json(body): Json<SendOtpRequest>,
 ) -> Result<(StatusCode, Json<ApiResponse<()>>), AppError> {
-    let ip = extract_ip_address(&headers);
-    app.auth_service.send_otp(&app, &body, ip).await?;
+    app.auth_service.send_otp(&app, &body).await?;
     Ok((StatusCode::OK, Json(ApiResponse::ok(()))))
 }
 
