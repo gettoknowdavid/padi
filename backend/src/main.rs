@@ -7,6 +7,7 @@ pub mod errors;
 pub mod features;
 pub mod middleware;
 pub mod routes;
+mod integrations;
 
 use crate::app::build_router;
 use crate::cache::cache_redis_pool;

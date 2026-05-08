@@ -25,6 +25,9 @@ pub enum AppError {
     #[error("Bad request")]
     BadRequest(String),
 
+    #[error("Too many request")]
+    TooManyRequests(String),
+
     #[error("Internal error")]
     Internal(String),
 
@@ -84,6 +87,10 @@ impl IntoResponse for AppError {
 
             AppError::BadRequest(message) => {
                 error_response(StatusCode::BAD_REQUEST, "BAD_REQUEST", message)
+            }
+
+            AppError::TooManyRequests(message) => {
+                error_response(StatusCode::TOO_MANY_REQUESTS, "TOO_MANY_REQUESTS", message)
             }
 
             AppError::Internal(message) => {

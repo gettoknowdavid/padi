@@ -1,0 +1,71 @@
+backend/
+├── Cargo.toml
+├── migrations/
+├── tests/
+│   └── api/
+└── src/
+    ├── main.rs
+    ├── lib.rs
+    │
+    ├── app/
+    │   ├── mod.rs
+    │   ├── state.rs        ← AppState
+    │   └── router.rs       ← build_router
+    │
+    ├── config.rs           ← Config::from_env()
+    ├── errors.rs           ← AppError
+    │
+    ├── common/             ← shared kernel, never imports from features
+    │   ├── mod.rs
+    │   ├── response.rs     ← ApiResponse<T>
+    │   ├── email.rs        ← EmailService
+    │   ├── middleware/
+    │   │   ├── mod.rs
+    │   │   ├── auth.rs     ← JWT extractor
+    │   │   ├── rate_limit.rs
+    │   │   └── tenant.rs   ← org scoping
+    │   └── utils/
+    │       ├── mod.rs
+    │       ├── phone.rs    ← Nigerian phone normalizer
+    │       └── ip.rs       ← extract_ip_address
+    │
+    ├── db.rs               ← PgPool setup
+    ├── cache.rs            ← RedisPool setup
+    │
+    ├── features/
+    │   ├── mod.rs
+    │   │
+    │   ├── auth/
+    │   │   ├── mod.rs
+    │   │   ├── constants.rs
+    │   │   ├── dto.rs
+    │   │   ├── models.rs
+    │   │   ├── validators.rs
+    │   │   ├── password.rs
+    │   │   ├── jwt.rs
+    │   │   ├── middleware.rs
+    │   │   ├── repository.rs  ← ALL data access (DB + Redis)
+    │   │   ├── service.rs     ← business logic only
+    │   │   ├── handlers.rs    ← HTTP only
+    │   │   └── routes.rs      ← route definitions
+    │   │
+    │   ├── contacts/       ← same 9-file pattern
+    │   ├── deals/
+    │   ├── tasks/
+    │   ├── invoices/
+    │   ├── organizations/
+    │   ├── communications/
+    │   └── reports/
+    │
+    ├── integrations/       ← third party clients, no business logic
+    │   ├── mod.rs
+    │   ├── paystack.rs
+    │   ├── flutterwave.rs
+    │   ├── whatsapp.rs
+    │   ├── termii.rs
+    │   └── africas_talking.rs
+    │
+    └── jobs/
+        ├── mod.rs
+        ├── reminders.rs
+        └── scheduler.rs

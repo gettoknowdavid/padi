@@ -1,3 +1,4 @@
+use crate::common::domain::phone_number::PhoneNumber;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use validator::ValidationError;
@@ -42,4 +43,12 @@ pub fn validate_strong_password(password: &str) -> Result<(), ValidationError> {
         let message = errors.join(", ");
         Err(ValidationError::new("strong_password").with_message(std::borrow::Cow::from(message)))
     }
+}
+
+pub fn validate_phone(phone: &str) -> Result<(), ValidationError> {
+    if PhoneNumber::normalize(phone, None).is_err() {
+        return Err(ValidationError::new("invalid_phone"));
+    }
+
+    Ok(())
 }

@@ -1,3 +1,4 @@
 pub mod types;
-pub mod utils;
 pub mod email;
+pub mod utils;
+pub mod domain;

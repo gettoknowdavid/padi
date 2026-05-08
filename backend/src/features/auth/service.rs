@@ -1,11 +1,14 @@
 use crate::app::AppState;
+use crate::common::domain::phone_number::PhoneNumber;
 use crate::errors::AppError;
+use crate::features::auth::dto::{SendOtpRequest, VerifyOtpRequest};
 use crate::features::auth::jwt::{CreateTokenArgs, create_access_token};
 use crate::features::auth::password::{hash_password, verify_password};
 use crate::features::auth::prelude::{
     AuthResponse, LoginRequest, RegisterRequest, ResetPasswordRequest, UserResponse,
 };
 use crate::features::auth::repository::AuthRepository;
+use crate::integrations::termii::send_otp;
 use anyhow::Result;
 use chrono::Utc;
 use deadpool_redis::Pool as RedisPool;
@@ -274,5 +277,108 @@ impl AuthService {
         };
 
         Ok(())
+    }
+
+    pub async fn send_otp(
+        &self,
+        app: &AppState,
+        body: &SendOtpRequest,
+        ip: Option<String>,
+    ) -> Result<(), AppError> {
+        if let Ok(false) = self.repo.check_rate_limit(&body.phone).await {
+            return Err(AppError::BadRequest(
+                "Too many OTP requests from this phone number. Please try again later.".to_string(),
+            ));
+        }
+
+        let otp = self.repo.generate_otp();
+
+        self.repo.store_phone_otp(&body.phone, &otp).await?;
+
+        self.repo.reset_otp_attempts(&body.phone).await?;
+
+        send_otp(
+            &app.http_client,
+            &app.config.africas_talking_api_key,
+            &body.phone.e164,
+            otp.as_str(),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to send OTP: {:?}", e);
+            AppError::Internal("Failed to send OTP".to_string())
+        })?;
+
+        let user = self
+            .repo
+            .find_by_phone(&body.phone.e164)
+            .await?
+            .ok_or_else(|| AppError::BadRequest("Could not find user".to_string()))?;
+
+        if let Err(e) = self.repo.audit(user.id, "user.otp_sent", ip).await {
+            tracing::error!("Failed to write audit log: {:?}", e);
+        };
+
+        Ok(())
+    }
+
+    pub async fn verify_otp(
+        &self,
+        app: &AppState,
+        body: &VerifyOtpRequest,
+        ip: Option<String>,
+    ) -> Result<AuthResponse, AppError> {
+        if let Some(attempts) = self.repo.check_otp_attempts(&body.phone).await? {
+            if attempts >= 3 {
+                return Err(AppError::TooManyRequests(
+                    "Too many OTP attempts. Please try again later.".to_string(),
+                ));
+            };
+        }
+
+        let otp = self.repo.get_otp(&body.phone).await?;
+
+        if otp.is_none() {
+            return Err(AppError::Unauthorized("Invalid or expired OTP".to_string()));
+        }
+
+        self.repo.increment_otp_attempts(&body.phone).await?;
+
+        if otp.as_ref().unwrap() != body.otp.as_str() {
+            return Err(AppError::Unauthorized("Invalid OTP".to_string()));
+        }
+
+        self.repo.delete_otp(&body.phone).await?;
+
+        let user = self
+            .repo
+            .find_by_phone(&body.phone.e164)
+            .await?
+            .ok_or_else(|| AppError::BadRequest("Could not find user".to_string()))?;
+
+        self.repo.update_phone(&body.phone, &user.id).await?;
+
+        let access_token = create_access_token(CreateTokenArgs {
+            user_id: user.id.to_string(),
+            secret: app.config.jwt_secret.to_string(),
+            org_id: None,
+            role: None,
+        })
+        .map_err(|error| {
+            tracing::error!("Failed to create access token: {:?}", error);
+            AppError::Internal("Failed to create access token".to_string())
+        })?;
+
+        let refresh_token = self.repo.create_session(&user.id.to_string()).await?;
+
+        if let Err(e) = self.repo.audit(user.id, "user.otp_verified", ip).await {
+            tracing::error!("Failed to write audit log: {:?}", e);
+        };
+
+        Ok(AuthResponse {
+            access_token,
+            refresh_token,
+            user: user.into_response(),
+        })
     }
 }
