@@ -24,7 +24,7 @@ pub fn create_access_token(args: CreateTokenArgs) -> Result<String, Error> {
         org_id: args.org_id,
         role: args.role,
         iat: now,
-        exp: now + 900, // 15 minutes
+        exp: now + 900,
     };
     encode(
         &Header::default(),
