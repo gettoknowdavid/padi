@@ -1,11 +1,6 @@
 use crate::common::domain::phone_number::PhoneNumber;
 use crate::errors::AppError;
-use crate::features::auth::constants::{
-    ACCOUNT_LOCK_HOURS, EMAIL_VERIFY_TTL_SECS, OTP_RATE_LIMIT_MAX, OTP_TTL_SECS,
-    PWD_RESET_TTL_SECS, RATE_LIMIT_WINDOW_SECONDS, REDIS_EMAIL_VERIFY_PREFIX,
-    REDIS_OTP_ATTEMPT_PREFIX, REDIS_OTP_PREFIX, REDIS_PWD_RESET_PREFIX, REDIS_REFRESH_TOKEN_PREFIX,
-    REFRESH_TOKEN_TTL_SECS,
-};
+use crate::features::auth::constants::{ACCOUNT_LOCK_HOURS, EMAIL_VERIFY_TTL_SECS, OTP_RATE_LIMIT_MAX, OTP_TTL_SECS, PWD_RESET_TTL_SECS, RATE_LIMIT_WINDOW_SECONDS, REDIS_EMAIL_VERIFY_PREFIX, REDIS_OTP_ATTEMPT_PREFIX, REDIS_OTP_PREFIX, REDIS_OTP_RATE_LIMIT_PREFIX, REDIS_PWD_RESET_PREFIX, REDIS_REFRESH_TOKEN_PREFIX, REFRESH_TOKEN_TTL_SECS};
 use crate::features::auth::dto::RegisterRequest;
 use crate::features::auth::models::User;
 use deadpool_redis::{Connection, Pool as RedisPool};
@@ -86,17 +81,6 @@ impl AuthRepository {
         .await
         .map_err(AppError::Database)
     }
-    pub async fn update_phone(&self, phone: &PhoneNumber, user_id: &Uuid) -> Result<(), AppError> {
-        sqlx::query!(
-            r#"UPDATE users SET phone = $1 WHERE id = $2"#,
-            &phone.e164,
-            user_id
-        )
-        .execute(&*self.database)
-        .await
-        .map_err(AppError::Database)?;
-        Ok(())
-    }
     pub async fn set_verified(&self, user_id: &Uuid) -> Result<(), AppError> {
         sqlx::query!("UPDATE users SET is_verified = true WHERE id = $1", user_id)
             .execute(&*self.database)
@@ -157,10 +141,14 @@ impl AuthRepository {
     ) -> Result<(), AppError> {
         sqlx::query!(
             r#"
-            INSERT INTO audit_logs (id, org_id, user_id, action, resource_type, resource_id, ip_address)
-            VALUES ($1, NULL, $2, $3, 'user', $4, $5)
+            INSERT INTO audit_logs (id, user_id, action, resource_type, resource_id, ip_address)
+            VALUES ($1, $2, $3, 'user', $4, $5)
             "#,
-            Uuid::new_v4(), user_id, action, user_id, ip.as_deref()
+            Uuid::new_v4(),
+            user_id,
+            action,
+            user_id,
+            ip.as_deref()
         )
             .execute(&*self.database)
             .await
@@ -260,7 +248,7 @@ impl AuthRepository {
             .await
             .map_err(AppError::Redis)
     }
-    pub async fn rotate_session(&self, old_token: &str) -> Result<(String, String), AppError> {
+    pub async fn _rotate_session(&self, old_token: &str) -> Result<(String, String), AppError> {
         let key = format!("{}{}", REDIS_REFRESH_TOKEN_PREFIX, old_token);
         let mut conn = self.redis_conn().await?;
 
@@ -285,7 +273,7 @@ impl AuthRepository {
         let new_token = self.create_session(&user_id).await?;
         Ok((user_id, new_token))
     }
-    pub async fn revoke_all_sessions(&self, user_id: &str) -> Result<(), AppError> {
+    pub async fn _revoke_all_sessions(&self, user_id: &str) -> Result<(), AppError> {
         let mut conn = self.redis_conn().await?;
         let pattern = format!("{}*", REDIS_REFRESH_TOKEN_PREFIX);
 
@@ -320,13 +308,13 @@ impl AuthRepository {
     // ── Rate Limiting for Phone OTP (Redis) ─────────────────────
     pub async fn check_rate_limit(&self, phone: &PhoneNumber) -> Result<bool, AppError> {
         let mut conn = self.redis_conn().await?;
-        let key = format!("{}{}", REDIS_OTP_ATTEMPT_PREFIX, &phone.e164);
+        let key = format!("{}{}", REDIS_OTP_RATE_LIMIT_PREFIX, &phone.e164);
 
         let script = redis::Script::new(
             r#"
             local count = redis.call('INCR', KEYS[1])
             if count == 1 then
-                redis.call('EXPIRE', KEYS[2], ARGV[1])
+                redis.call('EXPIRE', KEYS[1], ARGV[1])
             end
             return count
         "#,
@@ -357,9 +345,7 @@ impl AuthRepository {
     pub async fn increment_otp_attempts(&self, phone: &PhoneNumber) -> Result<(), AppError> {
         let mut conn = self.redis_conn().await?;
         let key = format!("{}{}", REDIS_OTP_ATTEMPT_PREFIX, &phone.e164);
-        redis::pipe()
-            .atomic()
-            .cmd("INCR")
+        redis::cmd("INCR")
             .arg(&key)
             .query_async(&mut conn)
             .await
@@ -368,8 +354,7 @@ impl AuthRepository {
     pub async fn check_otp_attempts(&self, phone: &PhoneNumber) -> Result<Option<u32>, AppError> {
         let mut conn = self.redis_conn().await?;
         let key = format!("{}{}", REDIS_OTP_ATTEMPT_PREFIX, &phone.e164);
-        redis::pipe()
-            .cmd("GET")
+        redis::cmd("GET")
             .arg(&key)
             .query_async(&mut conn)
             .await
@@ -393,7 +378,7 @@ impl AuthRepository {
             .await
             .map_err(AppError::Redis)
     }
-    pub async fn delete_otp(&self, phone: &PhoneNumber) -> Result<Option<String>, AppError> {
+    pub async fn delete_otp(&self, phone: &PhoneNumber) -> Result<(), AppError> {
         let mut conn = self.redis_conn().await?;
         let key = format!("{}{}", REDIS_OTP_PREFIX, &phone.e164);
         redis::cmd("DEL")

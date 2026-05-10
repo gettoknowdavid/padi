@@ -4,7 +4,7 @@ pub async fn send_otp(
     client: &reqwest::Client,
     api_key: &str,
     phone: &str,
-    otp: &str,
+    _otp: &str,
 ) -> Result<()> {
     let body = serde_json::json!({
         "api_key": api_key,

@@ -2,7 +2,7 @@ use crate::app::AppState;
 use crate::common::domain::phone_number::PhoneNumber;
 use crate::errors::AppError;
 use crate::features::auth::dto::{SendOtpRequest, VerifyOtpRequest};
-use crate::features::auth::jwt::{CreateTokenArgs, create_access_token};
+use crate::features::auth::jwt::{create_access_token, CreateTokenArgs};
 use crate::features::auth::password::{hash_password, verify_password};
 use crate::features::auth::prelude::{
     AuthResponse, LoginRequest, RegisterRequest, ResetPasswordRequest, UserResponse,
@@ -310,6 +310,12 @@ impl AuthService {
             AppError::Internal("Failed to send OTP".to_string())
         })?;
 
+        if let Ok(Some(user)) = self.repo.find_by_phone(&phone_number).await {
+            if let Err(e) = self.repo.audit(user.id, "user.otp_sent", None).await {
+                tracing::error!("Failed to write audit log: {:?}", e);
+            }
+        }
+
         Ok(())
     }
 
@@ -322,31 +328,34 @@ impl AuthService {
         let phone_number = PhoneNumber::normalize(&body.phone, body.country_code.as_deref())
             .map_err(|_| AppError::BadRequest("Invalid phone number".to_string()))?;
 
-        self.repo.increment_otp_attempts(&phone_number).await?;
-
         if let Some(attempts) = self.repo.check_otp_attempts(&phone_number).await? {
             if attempts >= 3 {
                 return Err(AppError::TooManyRequests(
-                    "Too many OTP attempts. Please try again later.".to_string(),
+                    "Too many OTP attempts. Please request a new OTP".to_string(),
                 ));
             };
         }
 
-        let otp = self.repo.get_otp(&phone_number).await?;
+        let stored_otp = self
+            .repo
+            .get_otp(&phone_number)
+            .await?
+            .ok_or_else(|| AppError::Unauthorized("OTP expired or not found".to_string()))?;
 
-        if otp.is_none() {
-            return Err(AppError::Unauthorized("Invalid or expired OTP".to_string()));
+        if let Err(e) = self.repo.increment_otp_attempts(&phone_number).await {
+            tracing::error!("Failed to increment OTP attempts: {:?}", e);
         }
 
-        if otp.as_deref() != Some(&body.otp) {
+        if stored_otp != body.otp {
             return Err(AppError::Unauthorized("Invalid OTP".to_string()));
         }
 
         self.repo.delete_otp(&phone_number).await?;
+        self.repo.reset_otp_attempts(&phone_number).await?;
 
         let user = match self.repo.find_by_phone(&phone_number).await? {
             Some(existing) => existing,
-            None => self.repo.create_phone_user(&phone_number).await?, // new user
+            None => self.repo.create_phone_user(&phone_number).await?,
         };
 
         let access_token = create_access_token(CreateTokenArgs {

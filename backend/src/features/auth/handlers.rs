@@ -76,7 +76,7 @@ pub async fn reset_password(
 }
 
 pub async fn send_otp(
-    State(app): State<AppState>,
+    State(app): State<Arc<AppState>>,
     Json(body): Json<SendOtpRequest>,
 ) -> Result<(StatusCode, Json<ApiResponse<()>>), AppError> {
     app.auth_service.send_otp(&app, &body).await?;
@@ -84,7 +84,7 @@ pub async fn send_otp(
 }
 
 pub async fn verify_otp(
-    State(app): State<AppState>,
+    State(app): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<VerifyOtpRequest>,
 ) -> Result<(StatusCode, Json<ApiResponse<AuthResponse>>), AppError> {
