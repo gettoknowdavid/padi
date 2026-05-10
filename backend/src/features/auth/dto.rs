@@ -64,11 +64,26 @@ pub struct RegisterRequest {
     pub full_name: String,
 
     pub phone: Option<String>,
+
+    pub phone_country: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct VerifyEmailRequest {
     pub token: String,
+}
+
+#[derive(Deserialize)]
+pub struct SendOtpRequest {
+    pub phone: String,
+    pub country_code: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct VerifyOtpRequest {
+    pub phone: String,
+    pub country_code: Option<String>,
+    pub otp: String,
 }
 
 // Responses
@@ -78,7 +93,7 @@ pub struct UserResponse {
     pub id: Uuid,
     pub email: Option<String>,
     pub phone: Option<String>,
-    pub full_name: String,
+    pub full_name: Option<String>,
     pub is_verified: bool,
 }
 

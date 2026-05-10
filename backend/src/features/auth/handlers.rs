@@ -1,4 +1,5 @@
-use crate::common::utils::extract_ip_address;
+use crate::common::utils::ip_address::extract_ip_address;
+use crate::features::auth::dto::{SendOtpRequest, VerifyOtpRequest};
 use crate::features::auth::prelude::{
     AuthResponse, ForgotPasswordRequest, LoginRequest, LogoutRequest, RegisterRequest,
     ResetPasswordRequest, UserResponse, VerifyEmailRequest,
@@ -72,4 +73,22 @@ pub async fn reset_password(
     let ip = extract_ip_address(&headers);
     app.auth_service.reset_password(&body, ip).await?;
     Ok((StatusCode::OK, Json(ApiResponse::ok(()))))
+}
+
+pub async fn send_otp(
+    State(app): State<Arc<AppState>>,
+    Json(body): Json<SendOtpRequest>,
+) -> Result<(StatusCode, Json<ApiResponse<()>>), AppError> {
+    app.auth_service.send_otp(&app, &body).await?;
+    Ok((StatusCode::OK, Json(ApiResponse::ok(()))))
+}
+
+pub async fn verify_otp(
+    State(app): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<VerifyOtpRequest>,
+) -> Result<(StatusCode, Json<ApiResponse<AuthResponse>>), AppError> {
+    let ip = extract_ip_address(&headers);
+    let user = app.auth_service.verify_otp(&app, &body, ip).await?;
+    Ok((StatusCode::OK, Json(ApiResponse::ok(user))))
 }

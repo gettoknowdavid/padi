@@ -2,11 +2,11 @@ CREATE TABLE public.audit_logs
 (
     id            UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
 
-    org_id        UUID        NOT NULL,
+    org_id        UUID NULL,
     user_id       UUID        NOT NULL,
 
     action        TEXT        NOT NULL,
-    resource_type TEXT        NOT NULL,
+    resource_type TEXT NOT NULL DEFAULT 'user',
     resource_id   UUID        NOT NULL,
     diff          JSONB       NULL,
     ip_address    TEXT        NULL,

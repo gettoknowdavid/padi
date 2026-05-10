@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -7,8 +9,8 @@ pub struct User {
     pub id: Uuid,
     pub email: Option<String>,
     pub phone: Option<String>,
-    pub full_name: String,
-    pub avatar_url: Option<String>,
+    pub full_name: Option<String>,
+    pub avatar_url: Option<String>, 
     pub password_hash: Option<String>,
     pub is_verified: bool,
     pub failed_login_attempts: i32,
