@@ -6,7 +6,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use deadpool_redis::{Pool, redis};
+use deadpool_redis::{redis, Pool};
 use redis::AsyncCommands;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -139,17 +139,18 @@ mod tests {
     use crate::features::auth::service::AuthService;
     use crate::middleware::rate_limit::rate_limit_middleware;
     use axum::{
-        Router,
         body::Body,
         http::{Request, StatusCode},
         middleware,
         routing::get,
+        Router,
     };
     use deadpool_redis::Pool;
     use reqwest::Client;
     use sqlx::PgPool;
     use std::sync::Arc;
     use tower::ServiceExt;
+    use crate::integrations::google::build_google_client;
 
     fn test_config() -> Config {
         Config {
@@ -171,6 +172,11 @@ mod tests {
             app_env: "test".to_string(),
             port: 8080,
             frontend_url: "http://localhost:3000".to_string(),
+            google_client_id: "google_client_id".to_string(),
+            google_client_secret: "google_client_secret".to_string(),
+            google_redirect_uri: "google_redirect_uri".to_string(),
+            google_auth_uri: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
+            google_token_uri: "https://oauth2.googleapis.com/token".to_string(),
             rate_limit_general: 5,
             rate_limit_general_window_secs: 2,
             rate_limit_auth: 3,
@@ -192,6 +198,7 @@ mod tests {
         let redis = Arc::new(redis_pool);
 
         let state = Arc::new(AppState {
+            google_client: build_google_client(&test_config()),
             email: EmailService::new(Client::new(), test_config().resend_api_key.clone()),
             auth_service: AuthService::new(database.clone(), redis.clone()),
             http_client: Client::new(),

@@ -86,6 +86,12 @@ pub struct VerifyOtpRequest {
     pub otp: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct GoogleCallbackParams {
+    pub code: String,
+    pub state: String,
+}
+
 // Responses
 #[must_use]
 #[derive(Debug, Serialize, FromRow)]
@@ -103,4 +109,12 @@ pub struct AuthResponse {
     pub access_token: String,
     pub refresh_token: String,
     pub user: UserResponse,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GoogleUserInfo {
+    pub email: String,
+    pub name: Option<String>,
+    pub picture: Option<String>,
+    pub verified_email: bool,
 }

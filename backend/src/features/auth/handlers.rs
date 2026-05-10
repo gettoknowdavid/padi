@@ -1,10 +1,12 @@
 use crate::common::utils::ip_address::extract_ip_address;
-use crate::features::auth::dto::{SendOtpRequest, VerifyOtpRequest};
+use crate::features::auth::dto::{GoogleCallbackParams, SendOtpRequest, VerifyOtpRequest};
 use crate::features::auth::prelude::{
     AuthResponse, ForgotPasswordRequest, LoginRequest, LogoutRequest, RegisterRequest,
     ResetPasswordRequest, UserResponse, VerifyEmailRequest,
 };
 use crate::{app::AppState, common::types::ApiResponse, errors::AppError};
+use axum::extract::Query;
+use axum::response::Redirect;
 use axum::{Json, extract::State, http::HeaderMap, http::StatusCode};
 use std::sync::Arc;
 use validator::Validate;
@@ -90,5 +92,20 @@ pub async fn verify_otp(
 ) -> Result<(StatusCode, Json<ApiResponse<AuthResponse>>), AppError> {
     let ip = extract_ip_address(&headers);
     let user = app.auth_service.verify_otp(&app, &body, ip).await?;
+    Ok((StatusCode::OK, Json(ApiResponse::ok(user))))
+}
+
+pub async fn google_authorize(State(app): State<Arc<AppState>>) -> Result<Redirect, AppError> {
+    let auth_url = app.auth_service.google_authorize(&app).await?;
+    Ok(Redirect::to(&auth_url))
+}
+
+pub async fn google_callback(
+    State(app): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(params): Query<GoogleCallbackParams>,
+) -> Result<(StatusCode, Json<ApiResponse<AuthResponse>>), AppError> {
+    let ip = extract_ip_address(&headers);
+    let user = app.auth_service.google_callback(&app, &params, ip).await?;
     Ok((StatusCode::OK, Json(ApiResponse::ok(user))))
 }
