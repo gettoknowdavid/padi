@@ -1,6 +1,12 @@
 use crate::common::domain::phone_number::PhoneNumber;
 use crate::errors::AppError;
-use crate::features::auth::constants::{ACCOUNT_LOCK_HOURS, EMAIL_VERIFY_TTL_SECS, OTP_RATE_LIMIT_MAX, OTP_TTL_SECS, PWD_RESET_TTL_SECS, RATE_LIMIT_WINDOW_SECONDS, REDIS_EMAIL_VERIFY_PREFIX, REDIS_OTP_ATTEMPT_PREFIX, REDIS_OTP_PREFIX, REDIS_OTP_RATE_LIMIT_PREFIX, REDIS_PWD_RESET_PREFIX, REDIS_REFRESH_TOKEN_PREFIX, REFRESH_TOKEN_TTL_SECS};
+use crate::features::auth::constants::{
+    ACCOUNT_LOCK_HOURS, CSRF_TOKEN_TTL_SECS, EMAIL_VERIFY_TTL_SECS, OTP_RATE_LIMIT_MAX,
+    OTP_TTL_SECS, PWD_RESET_TTL_SECS, RATE_LIMIT_WINDOW_SECONDS, REDIS_CSRF_TOKEN_PREFIX,
+    REDIS_EMAIL_VERIFY_PREFIX, REDIS_OTP_ATTEMPT_PREFIX, REDIS_OTP_PREFIX,
+    REDIS_OTP_RATE_LIMIT_PREFIX, REDIS_PWD_RESET_PREFIX, REDIS_REFRESH_TOKEN_PREFIX,
+    REFRESH_TOKEN_TTL_SECS,
+};
 use crate::features::auth::dto::RegisterRequest;
 use crate::features::auth::models::User;
 use deadpool_redis::{Connection, Pool as RedisPool};
@@ -131,6 +137,31 @@ impl AuthRepository {
         .map_err(AppError::Database)?;
         Ok(())
     }
+    pub async fn find_by_email_or_create_google_user(
+        &self,
+        email: &str,
+        full_name: Option<&str>,
+        avatar_url: Option<&str>,
+    ) -> Result<User, AppError> {
+        sqlx::query_as!(
+            User,
+            r#"
+            INSERT INTO users (id, email, full_name, avatar_url, is_verified)
+            VALUES ($1, $2, $3, $4, true)
+            ON CONFLICT (email) DO UPDATE
+                SET avatar_url = EXCLUDED.avatar_url,
+                    full_name = COALESCE(users.full_name, EXCLUDED.full_name)
+            RETURNING *
+            "#,
+            Uuid::new_v4(),
+            email,
+            full_name.as_deref(),
+            avatar_url.as_deref(),
+        )
+        .fetch_one(&*self.database)
+        .await
+        .map_err(AppError::Database)
+    }
 
     // ── Audit queries ─────────────────────────────────────────
     pub async fn audit(
@@ -150,9 +181,9 @@ impl AuthRepository {
             user_id,
             ip.as_deref()
         )
-            .execute(&*self.database)
-            .await
-            .map_err(AppError::Database)?;
+        .execute(&*self.database)
+        .await
+        .map_err(AppError::Database)?;
         Ok(())
     }
 
@@ -386,5 +417,31 @@ impl AuthRepository {
             .query_async(&mut conn)
             .await
             .map_err(AppError::Redis)
+    }
+
+    // ── Google Auth Tokens (Redis) ─────────────────────
+    pub async fn store_csrf_token(&self, csrf_token: &String) -> Result<(), AppError> {
+        let mut conn = self.redis_conn().await?;
+        let key = format!("{}{}", REDIS_CSRF_TOKEN_PREFIX, csrf_token);
+        redis::cmd("SET")
+            .arg(&key)
+            .arg("valid")
+            .arg("EX")
+            .arg(CSRF_TOKEN_TTL_SECS)
+            .query_async(&mut conn)
+            .await
+            .map_err(AppError::Redis)
+    }
+    pub async fn verify_and_delete_csrf_token(&self, csrf_token: &str) -> Result<bool, AppError> {
+        let mut conn = self.redis_conn().await?;
+        let key = format!("{}{}", REDIS_CSRF_TOKEN_PREFIX, csrf_token);
+
+        let value = redis::cmd("GETDEL")
+            .arg(&key)
+            .query_async::<Option<String>>(&mut conn)
+            .await
+            .map_err(AppError::Redis)?;
+
+        Ok(value.is_some())
     }
 }

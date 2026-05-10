@@ -1,8 +1,10 @@
 use crate::app::AppState;
 use crate::common::domain::phone_number::PhoneNumber;
 use crate::errors::AppError;
-use crate::features::auth::dto::{SendOtpRequest, VerifyOtpRequest};
-use crate::features::auth::jwt::{create_access_token, CreateTokenArgs};
+use crate::features::auth::dto::{
+    GoogleCallbackParams, GoogleUserInfo, SendOtpRequest, VerifyOtpRequest,
+};
+use crate::features::auth::jwt::{CreateTokenArgs, create_access_token};
 use crate::features::auth::password::{hash_password, verify_password};
 use crate::features::auth::prelude::{
     AuthResponse, LoginRequest, RegisterRequest, ResetPasswordRequest, UserResponse,
@@ -13,6 +15,7 @@ use crate::integrations::termii::send_otp;
 use anyhow::Result;
 use chrono::Utc;
 use deadpool_redis::Pool as RedisPool;
+use oauth2::{AuthorizationCode, CsrfToken, Scope, TokenResponse};
 use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -374,6 +377,116 @@ impl AuthService {
         if let Err(e) = self.repo.audit(user.id, "user.otp_verified", ip).await {
             tracing::error!("Failed to write audit log: {:?}", e);
         };
+
+        Ok(AuthResponse {
+            access_token,
+            refresh_token,
+            user: user.into_response(),
+        })
+    }
+
+    // 1. verify state matches CSRF token in Redis
+    // 2. exchange code for token via google_client.exchange_code(code)
+    // 3. GET https://www.googleapis.com/oauth2/v2/userinfo with Bearer token
+    // 4. find user by email, or INSERT if new
+    // 5. issue access + refresh tokens
+    pub async fn google_authorize(&self, app: &AppState) -> Result<String, AppError> {
+        let (auth_url, csrf_token) = app
+            .google_client
+            .authorize_url(CsrfToken::new_random)
+            .add_scope(Scope::new("openid".to_string()))
+            .add_scope(Scope::new("email".to_string()))
+            .add_scope(Scope::new("profile".to_string()))
+            .url();
+        self.repo.store_csrf_token(csrf_token.secret()).await?;
+        Ok(auth_url.to_string())
+    }
+    pub async fn google_callback(
+        &self,
+        app: &AppState,
+        params: &GoogleCallbackParams,
+        ip: Option<String>,
+    ) -> Result<AuthResponse, AppError> {
+        let is_csrf_valid = self
+            .repo
+            .verify_and_delete_csrf_token(&params.state)
+            .await
+            .map_err(|_| AppError::Unauthorized("Failed to verify CSRF token".to_string()))?;
+
+        if !is_csrf_valid {
+            return Err(AppError::Unauthorized(
+                "Invalid or expired state parameter".to_string(),
+            ));
+        }
+
+        let http_client = oauth2::reqwest::ClientBuilder::new()
+            .redirect(oauth2::reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| {
+                tracing::error!("Failed to build HTTP client: {:?}", e);
+                AppError::Internal("Failed to build HTTP client".to_string())
+            })?;
+
+        let token_response = app
+            .google_client
+            .exchange_code(AuthorizationCode::new(params.code.clone()))
+            .request_async(&http_client)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to exchange Google auth code: {:?}", e);
+                AppError::Unauthorized("Failed to authenticate with Google".to_string())
+            })?;
+
+        let google_access_token = token_response.access_token().secret();
+
+        let user_info: GoogleUserInfo = app
+            .http_client
+            .get("https://www.googleapis.com/oauth2/v2/userinfo")
+            .bearer_auth(google_access_token)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to fetch Google user info: {:?}", e);
+                AppError::Internal("Failed to fetch user info from Google".to_string())
+            })?
+            .json()
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to parse Google user info: {:?}", e);
+                AppError::Internal("Failed to parse Google user info".to_string())
+            })?;
+
+        if !user_info.verified_email {
+            return Err(AppError::Unauthorized(
+                "Google account email is not verified".to_string(),
+            ));
+        }
+
+        let user = self
+            .repo
+            .find_by_email_or_create_google_user(
+                &user_info.email,
+                user_info.name.as_deref(),
+                user_info.picture.as_deref(),
+            )
+            .await?;
+
+        let access_token = create_access_token(CreateTokenArgs {
+            user_id: user.id.to_string(),
+            secret: app.config.jwt_secret.clone(),
+            org_id: None,
+            role: None,
+        })
+        .map_err(|e| {
+            tracing::error!("Failed to create access token: {:?}", e);
+            AppError::Internal("Failed to create access token".to_string())
+        })?;
+
+        let refresh_token = self.repo.create_session(&user.id.to_string()).await?;
+
+        if let Err(e) = self.repo.audit(user.id, "user.google_login", ip).await {
+            tracing::error!("Failed to write audit log: {:?}", e);
+        }
 
         Ok(AuthResponse {
             access_token,

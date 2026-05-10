@@ -20,6 +20,12 @@ pub struct Config {
     pub port: u16,
     pub frontend_url: String,
 
+    pub google_client_id: String,
+    pub google_client_secret: String,
+    pub google_redirect_uri: String,
+    pub google_auth_uri: String,
+    pub google_token_uri: String,
+
     pub rate_limit_general: usize,
     pub rate_limit_general_window_secs: u64,
     pub rate_limit_auth: usize,
@@ -65,6 +71,11 @@ impl Config {
                 .parse::<u16>()
                 .context("PORT must be a valid number")?,
             frontend_url: var("FRONTEND_URL").context("FRONTEND_URL is missing")?,
+            google_client_id: var("GOOGLE_CLIENT_ID").context("GOOGLE_CLIENT_ID is missing")?,
+            google_client_secret: var("GOOGLE_CLIENT_SECRET").context("GOOGLE_CLIENT_SECRET is missing")?,
+            google_redirect_uri: var("GOOGLE_REDIRECT_URI").context("GOOGLE_REDIRECT_URI is missing")?,
+            google_auth_uri: var("GOOGLE_AUTH_URI").context("GOOGLE_AUTH_URI is missing")?,
+            google_token_uri: var("GOOGLE_TOKEN_URI").context("GOOGLE_TOKEN_URI is missing")?,
             rate_limit_auth: AUTH_LIMIT,
             rate_limit_auth_window_secs: AUTH_WINDOW_SECS,
             rate_limit_general: GENERAL_LIMIT,
