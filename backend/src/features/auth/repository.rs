@@ -7,7 +7,7 @@ use crate::features::auth::constants::{
     REDIS_OTP_RATE_LIMIT_PREFIX, REDIS_PWD_RESET_PREFIX, REDIS_REFRESH_TOKEN_PREFIX,
     REFRESH_TOKEN_TTL_SECS,
 };
-use crate::features::auth::dto::RegisterRequest;
+use crate::features::auth::dto::{RegisterRequest};
 use crate::features::auth::models::User;
 use deadpool_redis::{Connection, Pool as RedisPool};
 use sqlx::PgPool;

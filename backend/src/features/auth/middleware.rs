@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use crate::app::AppState;
 use crate::errors::AppError;
 use crate::features::auth::jwt::decode_access_token;
@@ -6,11 +5,13 @@ use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use jsonwebtoken::errors::ErrorKind;
+use std::sync::Arc;
+use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub struct AuthUser {
-    pub user_id: String,
-    pub org_id: Option<String>,
+    pub user_id: Uuid,
+    pub org_id: Option<Uuid>,
     pub role: Option<String>,
 }
 

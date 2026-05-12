@@ -39,6 +39,9 @@ pub enum AppError {
 
     #[error("Token expired")]
     TokenExpired(String),
+
+    #[error("Access Denied.")]
+    Forbidden,
 }
 
 impl From<ValidationErrors> for AppError {
@@ -108,6 +111,10 @@ impl IntoResponse for AppError {
 
             AppError::TokenExpired(message) => {
                 error_response(StatusCode::UNAUTHORIZED, "TOKEN_EXPIRED", message)
+            }
+
+            AppError::Forbidden => {
+                error_response(StatusCode::FORBIDDEN, "FORBIDDEN", "Access denied")
             }
 
             AppError::ValidatorError(validation_errors) => {

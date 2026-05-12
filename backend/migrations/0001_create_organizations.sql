@@ -6,18 +6,18 @@ CREATE TABLE public.organizations
     slug              TEXT        NOT NULL UNIQUE,
     logo_url          TEXT        NULL,
 
-    address           TEXT        NOT NULL,
-    state_code        TEXT        NOT NULL,
-    lga               TEXT        NOT NULL,
+    address           TEXT,
+    state_code        TEXT,
+    lga               TEXT,
 
-    cac_number        TEXT        NOT NULL,
-    tin               TEXT        NOT NULL,
+    cac_number        TEXT,
+    tin               TEXT,
 
-    phone             TEXT        NOT NULL,
-    whatsapp_number   TEXT        NOT NULL,
-    email             TEXT        NOT NULL UNIQUE,
+    phone             TEXT,
+    whatsapp_number   TEXT,
+    email             TEXT        NULL UNIQUE,
 
-    subscription_plan TEXT        NULL     DEFAULT 'free',
+    subscription_plan TEXT        NOT NULL     DEFAULT 'free',
     sms_sender_id     TEXT        NULL,
 
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),

@@ -1,18 +1,19 @@
 use jsonwebtoken::errors::Error;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use uuid::Uuid;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct Claims {
-    pub sub: String,
-    pub org_id: Option<String>,
+    pub sub: Uuid,
+    pub org_id: Option<Uuid>,
     pub role: Option<String>,
     pub iat: u64,
     pub exp: u64,
 }
 
 pub struct CreateTokenArgs {
-    pub user_id: String,
-    pub org_id: Option<String>,
+    pub user_id: Uuid,
+    pub org_id: Option<Uuid>,
     pub role: Option<String>,
     pub secret: String,
 }

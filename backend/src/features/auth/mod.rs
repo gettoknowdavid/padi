@@ -11,3 +11,4 @@ pub mod middleware;
 pub mod prelude;
 pub mod service;
 pub mod utils;
+pub mod rbac;
