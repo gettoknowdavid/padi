@@ -202,7 +202,7 @@ impl AuthService {
         let user_id = user.id.to_string();
 
         let access_token = create_access_token(CreateTokenArgs {
-            user_id: user_id.clone(),
+            user_id: user.id.clone(),
             secret: app.config.jwt_secret.to_string(),
             org_id: None,
             role: None,
@@ -362,7 +362,7 @@ impl AuthService {
         };
 
         let access_token = create_access_token(CreateTokenArgs {
-            user_id: user.id.to_string(),
+            user_id: user.id,
             secret: app.config.jwt_secret.to_string(),
             org_id: None,
             role: None,
@@ -472,7 +472,7 @@ impl AuthService {
             .await?;
 
         let access_token = create_access_token(CreateTokenArgs {
-            user_id: user.id.to_string(),
+            user_id: user.id,
             secret: app.config.jwt_secret.clone(),
             org_id: None,
             role: None,
@@ -492,6 +492,25 @@ impl AuthService {
             access_token,
             refresh_token,
             user: user.into_response(),
+        })
+    }
+
+    pub fn issue_org_token(
+        &self,
+        app: &AppState,
+        user_id: Uuid,
+        org_id: Uuid,
+        role: &str,
+    ) -> Result<String, AppError> {
+        create_access_token(CreateTokenArgs {
+            user_id,
+            org_id: Some(org_id),
+            role: Some(role.to_string()),
+            secret: app.config.jwt_secret.clone(),
+        })
+        .map_err(|e| {
+            tracing::error!("Failed to issue org token: {:?}", e);
+            AppError::Internal("Failed to issue token".to_string())
         })
     }
 }

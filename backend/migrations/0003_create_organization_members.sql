@@ -3,7 +3,7 @@ CREATE TABLE public.organization_members
     org_id          UUID        NOT NULL,
     user_id         UUID        NOT NULL,
 
-    role            TEXT        NOT NULL,
+    role            TEXT        NOT NULL CHECK ( role IN ('owner', 'admin', 'sales', 'support', 'agent') ),
 
     referral_code   TEXT UNIQUE NULL,
     commission_rate DECIMAL     NULL CHECK (commission_rate >= 0 AND commission_rate <= 1.0),

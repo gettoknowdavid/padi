@@ -1,6 +1,7 @@
 use crate::common::email::EmailService;
 use crate::config::Config;
 use crate::features::auth::service::AuthService;
+use crate::features::organizations::service::OrgService;
 use crate::integrations::google::{OAuthBasicClient, build_google_client};
 use crate::middleware::rate_limit::rate_limit_middleware;
 use axum::{Router, http::StatusCode, middleware};
@@ -25,6 +26,7 @@ pub struct AppState {
     pub google_client: OAuthBasicClient,
     pub email: EmailService,
     pub auth_service: AuthService,
+    pub org_service: OrgService,
 }
 
 /// Build the application router
@@ -36,6 +38,7 @@ pub async fn build_router(config: Config, pg_pool: PgPool, redis_pool: RedisPool
         google_client: build_google_client(&config),
         email: EmailService::new(Client::new(), config.resend_api_key.clone()),
         auth_service: AuthService::new(database.clone(), redis.clone()),
+        org_service: OrgService::new(database.clone()),
         http_client: Client::new(),
         config,
         database,
